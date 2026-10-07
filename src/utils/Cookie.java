@@ -11,18 +11,24 @@ public class Cookie {
      */
     public static Map<String, String> parse(String cookieHeader) {
         Map<String, String> cookies = new HashMap<>();
-        if (cookieHeader == null || cookieHeader.trim().isEmpty()) {
+        if (cookieHeader == null || cookieHeader.isBlank()) {
             return cookies;
         }
 
-        String[] pairs = cookieHeader.split(";");
-        for (String pair : pairs) {
-            String[] keyValue = pair.trim().split("=", 2);
-            if (keyValue.length == 2) {
-                cookies.put(keyValue[0].trim(), keyValue[1].trim());
-            } else if (keyValue.length == 1) {
-                cookies.put(keyValue[0].trim(), "");
+        for (String pair : cookieHeader.split(";")) {
+            pair = pair.trim();
+            if (pair.isEmpty())
+                continue;
+            String[] keyValue = pair.split("=", 2);
+            String name = keyValue[0].trim();
+            if (name.isEmpty())
+                continue;
+
+            String value = keyValue.length == 2 ? keyValue[1].trim() : "";
+            if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+                value = value.substring(1, value.length() - 1);
             }
+            cookies.putIfAbsent(name, value);
         }
         return cookies;
     }
@@ -31,8 +37,11 @@ public class Cookie {
      * Formats a standard HTTP "Set-Cookie" header string.
      */
     public static String formatSetCookie(String name, String value, String path, boolean httpOnly, int maxAge) {
+        if (name == null || name.isEmpty() || hasIllegalChars(name) || hasIllegalChars(value)) {
+            throw new IllegalArgumentException("Invalid cookie name or value");
+        }
         StringBuilder builder = new StringBuilder();
-        builder.append(name).append("=").append(value);
+        builder.append(name).append("=").append(value == null ? "" : value);
 
         if (path != null && !path.isEmpty()) {
             builder.append("; Path=").append(path);
@@ -43,7 +52,14 @@ public class Cookie {
         if (httpOnly) {
             builder.append("; HttpOnly");
         }
+        builder.append("; SameSite=Lax");
 
         return builder.toString();
+    }
+
+    private static boolean hasIllegalChars(String s) {
+        if (s == null)
+            return false;
+        return s.indexOf(';') >= 0 || s.indexOf('\r') >= 0 || s.indexOf('\n') >= 0;
     }
 }
