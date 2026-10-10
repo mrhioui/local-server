@@ -1,11 +1,18 @@
 {
+  "settings": {
+    "idle_timeout_ms": 15000,
+    "keep_alive_timeout_ms": 5000,
+    "request_timeout_ms": 30000,
+    "max_header_bytes": 16384,
+    "max_connections": 512
+  },
   "servers": [
     {
       "host": "127.0.0.1",
       "ports": [8080, 8081],
-      "server_names": ["localhost"],
-      "default_server": true,
-      "max_body_size": 10485760,
+      "server_names": ["site-a.test"],
+      "default": true,
+      "client_max_body_size": 1048576,
       "error_pages": {
         "400": "error_pages/400.html",
         "403": "error_pages/403.html",
@@ -15,20 +22,26 @@
         "500": "error_pages/500.html"
       },
       "routes": [
-        { "path": "/", "root": "www", "methods": ["GET"],
-          "default_file": "index.html", "autoindex": false },
-        { "path": "/uploads", "root": "www/uploads",
-          "methods": ["GET", "POST", "DELETE"], "autoindex": true,
-          "upload_dir": "www/uploads" },
-        { "path": "/old", "redirect": "/", "redirect_code": 301 }
+        { "path": "/", "methods": ["GET"], "root": "www/site-a", "index": "index.html" },
+        { "path": "/upload", "methods": ["GET", "POST", "DELETE"], "root": "www/uploads", "autoindex": true },
+        { "path": "/old", "redirect": { "code": 301, "to": "/" } },
+        { "path": "/cgi-bin", "methods": ["GET", "POST"], "root": "www/cgi", "cgi": { ".py": "/usr/bin/python3" } }
       ]
     },
     {
       "host": "127.0.0.1",
       "ports": [8080],
-      "server_names": ["test.com"],
+      "server_names": ["site-b.test"],
       "routes": [
-        { "path": "/", "root": "www/site2", "default_file": "index.html" }
+        { "path": "/", "methods": ["GET"], "root": "www/site-b" }
+      ]
+    },
+    {
+      "host": "127.0.0.1",
+      "ports": [9090],
+      "client_max_body_size": 1024,
+      "routes": [
+        { "path": "/", "methods": ["GET", "POST"], "root": "www/site-a", "autoindex": true }
       ]
     }
   ]
