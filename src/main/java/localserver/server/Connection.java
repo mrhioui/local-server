@@ -1,0 +1,325 @@
+package localserver.server;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.SocketChannel;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import localserver.config.ListenerSpec;
+import localserver.config.ServerConfig;
+import localserver.config.Settings;
+import localserver.http.BodySink;
+import localserver.http.FileBodySink;
+import localserver.http.HeadDecision;
+import localserver.http.HttpParser;
+import localserver.http.MemoryBodySink;
+import localserver.http.ParseError;
+import localserver.http.Request;
+import localserver.http.Status;
+
+/**
+ * Everything the server knows about one client: its buffers, its progress through the current
+ * request, and its clocks. A non-blocking server cannot keep this on a thread's stack, so it lives
+ * here, attached to the connection's SelectionKey.
+ *
+ * <p>Rules this class follows (they are what the audit checks):
+ * <ul>
+ *   <li>one read OR one write per readiness event, and every return value is checked;</li>
+ *   <li>read interest is only set while reading, write interest only while a response is pending;</li>
+ *   <li>any failure ends in {@link Server#close(SelectionKey)}, which is idempotent.</li>
+ * </ul>
+ *
+ * <p>States: READING (the parser consumes head and body) -> WRITING -> READING again (keep-alive),
+ * closed, or LINGERING. Lingering is for refused requests: the client may still be sending a body we
+ * will never read, and closing a socket that has unread incoming data makes TCP send a reset that can
+ * destroy the error response we just wrote. So we send the response, shut down our sending side, and
+ * briefly read and discard until the client finishes or a small budget runs out.
+ *
+ * <p>Until the router arrives (M4), every valid request is answered by echoing what was parsed.
+ */
+final class Connection {
+
+    private enum State { READING, WRITING, LINGERING }
+
+    /** What to do once the queued bytes are fully written. */
+    private enum After { NEXT_REQUEST, RESUME_PARSING, CLOSE, LINGER }
+
+    private static final int MEMORY_BODY_LIMIT = 64 * 1024;      // bigger bodies go to a temp file
+    private static final long LINGER_NANOS = 2_000_000_000L;
+    private static final long LINGER_MAX_BYTES = 1024 * 1024;
+    private static final long HASH_LIMIT = 16L * 1024 * 1024;    // echo only hashes bodies up to this
+    private static final List<String> SUPPORTED_METHODS = List.of("GET", "POST", "DELETE");
+
+    private final Server server;
+    private final SelectionKey key;
+    private final SocketChannel channel;
+    private final ListenerSpec listener;
+
+    private final ByteBuffer in = ByteBuffer.allocate(8192);     // in "fill" mode between events
+    private final HttpParser parser;
+    private ByteBuffer out;
+    private State state = State.READING;
+    private After after = After.NEXT_REQUEST;
+    private ServerConfig selected;                               // virtual host of the current request
+
+    private long lastActivity;   // last time bytes actually moved
+    private long requestStart;   // first byte of the current request
+    private long lingerStart;
+    private long lingered;
+
+    Connection(Server server, SelectionKey key, SocketChannel channel, ListenerSpec listener, Settings settings) {
+        this.server = server;
+        this.key = key;
+        this.channel = channel;
+        this.listener = listener;
+        this.parser = new HttpParser(settings.maxHeaderBytes(), this::onHead);
+        this.lastActivity = server.now();
+    }
+
+    // ---- readiness events ----------------------------------------------------------------
+
+    void onReadable() throws IOException {
+        if (state == State.LINGERING) {
+            drain();
+            return;
+        }
+        int n = channel.read(in);
+        if (n < 0) {                 // peer closed its side
+            server.close(key);
+            return;
+        }
+        if (n == 0) {                // spurious wake-up: nothing to do
+            return;
+        }
+        lastActivity = server.now();
+        pump();
+    }
+
+    void onWritable() throws IOException {
+        int n = channel.write(out);  // may write only part of the buffer; that is normal
+        if (n > 0) {
+            lastActivity = server.now();
+        }
+        if (out.hasRemaining()) {
+            return;                  // keep OP_WRITE, continue on the next event
+        }
+        out = null;
+        switch (after) {
+            case RESUME_PARSING -> {             // the interim "100 Continue" is out: go back to the body
+                state = State.READING;
+                key.interestOps(SelectionKey.OP_READ);
+                if (in.position() > 0) {
+                    pump();
+                }
+            }
+            case NEXT_REQUEST -> {               // keep-alive: ready for the next request
+                server.requestCompleted();
+                parser.reset();                  // also releases this request's body (temp file)
+                selected = null;
+                requestStart = 0;
+                lastActivity = server.now();
+                state = State.READING;
+                key.interestOps(SelectionKey.OP_READ);
+                if (in.position() > 0) {
+                    pump();                      // a pipelined request is already buffered: no I/O needed
+                }
+            }
+            case CLOSE -> {
+                server.requestCompleted();
+                server.close(key);
+            }
+            case LINGER -> {
+                server.requestCompleted();
+                beginLinger();
+            }
+        }
+    }
+
+    // ---- request handling ----------------------------------------------------------------
+
+    /** Consumes buffered input. Does no socket I/O. */
+    private void pump() {
+        in.flip();
+        try {
+            if (!parser.started() && in.hasRemaining()) {
+                requestStart = server.now();
+            }
+            switch (parser.feed(in)) {
+                case NEED_MORE -> { }
+                case SEND_CONTINUE -> respond(interimContinue(), After.RESUME_PARSING);
+                case COMPLETE -> handle(parser.request());
+                case ERROR -> refuse(parser.error());
+            }
+        } finally {
+            in.compact();            // keep any unconsumed bytes for the next round
+        }
+    }
+
+    /**
+     * Called by the parser after the head, before any body byte. Picks the virtual host, so the body
+     * limit is that server's. M4 adds route matching here: 404 and 405 are answered without reading a
+     * body at all.
+     */
+    private HeadDecision onHead(Request request) {
+        selected = listener.select(request.host());
+        return HeadDecision.accept(selected.maxBodySize(), () ->
+                request.bodyMode() == Request.BodyMode.FIXED && request.contentLength() <= MEMORY_BODY_LIMIT
+                        ? new MemoryBodySink()
+                        : FileBodySink.create(server.tempDir()));
+    }
+
+    /** A complete, valid request: M3 answers with a description of what was parsed. */
+    private void handle(Request request) {
+        boolean keepAlive = request.keepAlive();
+        After next = keepAlive ? After.NEXT_REQUEST : After.CLOSE;
+        if (!SUPPORTED_METHODS.contains(request.method())) {
+            respond(response(405, "405 Method Not Allowed\n", !keepAlive, "Allow: GET, POST, DELETE\r\n"), next);
+            return;
+        }
+        respond(response(200, echo(request), !keepAlive, ""), next);
+    }
+
+    /** A request we will not serve (malformed, too large, refused): answer, then linger and close. */
+    private void refuse(ParseError error) {
+        String text = error.status() + " " + Status.reason(error.status()) + "\n" + error.message() + "\n";
+        respond(response(error.status(), text, true, ""), After.LINGER);
+    }
+
+    private void respond(byte[] bytes, After then) {
+        out = ByteBuffer.wrap(bytes);
+        after = then;
+        state = State.WRITING;
+        key.interestOps(SelectionKey.OP_WRITE);
+    }
+
+    private static byte[] interimContinue() {
+        return "HTTP/1.1 100 Continue\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1);
+    }
+
+    // ---- lingering close -------------------------------------------------------------------
+
+    private void beginLinger() throws IOException {
+        channel.shutdownOutput();    // the client now sees the end of our response
+        state = State.LINGERING;
+        lingerStart = server.now();
+        lastActivity = lingerStart;
+        key.interestOps(SelectionKey.OP_READ);
+    }
+
+    /** Reads and throws away whatever the client is still sending. */
+    private void drain() throws IOException {
+        in.clear();
+        int n = channel.read(in);
+        in.clear();
+        if (n < 0) {
+            server.close(key);       // the client finished: a clean close, no reset
+            return;
+        }
+        lingered += n;
+        if (lingered > LINGER_MAX_BYTES) {
+            server.close(key);       // not going to absorb an unbounded upload
+        }
+    }
+
+    // ---- the M3 demo response ----------------------------------------------------------------
+
+    private String echo(Request r) {
+        StringBuilder sb = new StringBuilder(512);
+        sb.append("LocalServer M3 - parsed request\n");
+        sb.append("method:     ").append(r.method()).append('\n');
+        sb.append("target:     ").append(r.target()).append('\n');
+        sb.append("path:       ").append(r.path()).append('\n');
+        sb.append("query:      ").append(r.query()).append('\n');
+        sb.append("version:    ").append(r.version()).append('\n');
+        sb.append("host:       ").append(r.host()).append('\n');
+        sb.append("server:     ").append(selected.label()).append(" via ").append(listener.key()).append('\n');
+        sb.append("keep-alive: ").append(r.keepAlive()).append('\n');
+        sb.append("body:       ").append(describeBody(r)).append('\n');
+        sb.append("headers (").append(r.headers().count()).append("):\n");
+        for (Map.Entry<String, List<String>> e : r.headers().asMap().entrySet()) {
+            for (String value : e.getValue()) {
+                sb.append("  ").append(e.getKey()).append(": ").append(value).append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String describeBody(Request r) {
+        BodySink body = r.body();
+        if (body == null) {
+            return "none";
+        }
+        String kind = r.bodyMode().name().toLowerCase();
+        if (body.size() > HASH_LIMIT) {
+            return kind + ", " + body.size() + " bytes, sha256 skipped";
+        }
+        try (InputStream stream = body.openRead()) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] chunk = new byte[8192];
+            int n;
+            while ((n = stream.read(chunk)) > 0) {
+                digest.update(chunk, 0, n);
+            }
+            return kind + ", " + body.size() + " bytes, sha256 " + HexFormat.of().formatHex(digest.digest());
+        } catch (IOException | NoSuchAlgorithmException e) {
+            return kind + ", " + body.size() + " bytes, sha256 unavailable";
+        }
+    }
+
+    private byte[] response(int status, String body, boolean close, String extraHeaders) {
+        byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+        String headText = "HTTP/1.1 " + status + " " + Status.reason(status) + "\r\n"
+                + "Date: " + server.date() + "\r\n"
+                + "Server: LocalServer\r\n"
+                + "Content-Type: text/plain; charset=utf-8\r\n"
+                + "Content-Length: " + payload.length + "\r\n"
+                + extraHeaders
+                + "Connection: " + (close ? "close" : "keep-alive") + "\r\n"
+                + "\r\n";
+        byte[] headBytes = headText.getBytes(StandardCharsets.ISO_8859_1);
+        byte[] all = Arrays.copyOf(headBytes, headBytes.length + payload.length);
+        System.arraycopy(payload, 0, all, headBytes.length, payload.length);
+        return all;
+    }
+
+    // ---- timeouts and cleanup --------------------------------------------------------------
+
+    /**
+     * Why this connection should be closed now, or null if it is fine. Two clocks:
+     * inactivity (nothing moving) and the per-request deadline (stops slow trickling).
+     */
+    String timeoutReason(long now, Settings s) {
+        if (state == State.LINGERING) {
+            return now - lingerStart > LINGER_NANOS ? "linger over" : null;
+        }
+        long quiet = now - lastActivity;
+        boolean inRequest = state == State.WRITING || parser.started();
+        if (!inRequest) {
+            return quiet > millis(s.keepAliveTimeoutMs()) ? "idle" : null;
+        }
+        if (quiet > millis(s.idleTimeoutMs())) {
+            return "stalled";
+        }
+        if (now - requestStart > millis(s.requestTimeoutMs())) {
+            return "request too slow";
+        }
+        return null;
+    }
+
+    /** Frees whatever the connection holds besides the channel: the body temp file, later a CGI process. */
+    void releaseResources() {
+        out = null;
+        parser.close();
+    }
+
+    private static long millis(int ms) {
+        return ms * 1_000_000L;
+    }
+}

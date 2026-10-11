@@ -1,89 +1,69 @@
 package localserver.config;
 
-import java.util.List;
+import java.nio.file.Path;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
- * A single route block from the config (one entry of a server's "routes").
+ * One validated route of a server block. Immutable.
  *
- * STUB (person B): fields sketch the shape of a route; wire ConfigLoader/Json
- * to populate these and have ServerConfig hold a List&lt;Route&gt; instead of the
- * legacy RouteConfig map.
+ * @param path       URL prefix, normalized: starts with '/', no trailing slash except "/" itself
+ * @param methods    accepted methods, in config order (so the Allow header is stable)
+ * @param root       real, absolute directory the route serves from; null only for pure redirects
+ * @param index      default file for directories
+ * @param autoindex  whether a directory without an index file may be listed
+ * @param redirect   non-null when the route is a redirect
+ * @param cgi        extension (".py", lowercase) to interpreter; an empty interpreter means
+ *                   "execute the file directly"
  */
-public class Route {
-    private String path;
-    private List<String> methods;
-    private String root;
-    private String defaultFile;
-    private boolean autoindex;
-    private String uploadDir;
-    private String redirect;
-    private int redirectCode;
+public record Route(
+        String path,
+        Set<String> methods,
+        Path root,
+        String index,
+        boolean autoindex,
+        Redirect redirect,
+        Map<String, String> cgi) {
 
-    public String getPath() {
-        return path;
+    public record Redirect(int code, String to) { }
+
+    public Route {
+        Objects.requireNonNull(path, "path");
+        methods = Collections.unmodifiableSet(new LinkedHashSet<>(methods));
+        cgi = Map.copyOf(cgi);
     }
 
-    public void setPath(String path) {
-        this.path = path;
+    /**
+     * Prefix match on whole path segments: "/img" matches "/img" and "/img/a.png"
+     * but not "/imgfoo". The route "/" matches everything.
+     * Expects the already decoded and normalized URL path (no query string).
+     */
+    public boolean matches(String urlPath) {
+        return path.equals("/") || urlPath.equals(path) || urlPath.startsWith(path + "/");
     }
 
-    public List<String> getMethods() {
-        return methods;
+    public boolean allows(String method) {
+        return methods.contains(method);
     }
 
-    public void setMethods(List<String> methods) {
-        this.methods = methods;
+    /** Value for the Allow header of a 405 response. */
+    public String allowHeader() {
+        return String.join(", ", methods);
     }
 
-    public String getRoot() {
-        return root;
-    }
-
-    public void setRoot(String root) {
-        this.root = root;
-    }
-
-    public String getDefaultFile() {
-        return defaultFile;
-    }
-
-    public void setDefaultFile(String defaultFile) {
-        this.defaultFile = defaultFile;
-    }
-
-    public boolean isAutoindex() {
-        return autoindex;
-    }
-
-    public void setAutoindex(boolean autoindex) {
-        this.autoindex = autoindex;
-    }
-
-    public String getUploadDir() {
-        return uploadDir;
-    }
-
-    public void setUploadDir(String uploadDir) {
-        this.uploadDir = uploadDir;
-    }
-
-    public String getRedirect() {
-        return redirect;
-    }
-
-    public void setRedirect(String redirect) {
-        this.redirect = redirect;
-    }
-
-    public int getRedirectCode() {
-        return redirectCode;
-    }
-
-    public void setRedirectCode(int redirectCode) {
-        this.redirectCode = redirectCode;
-    }
-
-    public boolean isRedirect() {
-        return redirect != null && !redirect.isEmpty();
+    /**
+     * Interpreter configured for this file name's extension; null if the file is not a CGI
+     * script on this route. An empty string means "run the file directly".
+     */
+    public String interpreterFor(String fileName) {
+        int dot = fileName.lastIndexOf('.');
+        if (dot < 0) {
+            return null;
+        }
+        return cgi.get(fileName.substring(dot).toLowerCase(Locale.ROOT));
     }
 }

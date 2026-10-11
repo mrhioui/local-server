@@ -1,145 +1,100 @@
 package localserver.http;
 
-import localserver.session.Cookies;
+/**
+ * A parsed request. Everything except the body is immutable and fixed once the head is parsed;
+ * the body sink is attached by the parser as soon as the head is accepted and is complete when
+ * the parser reports COMPLETE.
+ */
+public final class Request {
 
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
-import java.util.Map;
+    public enum BodyMode { NONE, FIXED, CHUNKED }
 
-public class Request {
-    private String method = "";
-    private String uri = ""; // raw, as received: /a%20b?x=1
-    private String path = ""; // decoded, no query: /a b
-    private String queryString = ""; // x=1
-    private boolean malformedUri = false;
-    private String version = "HTTP/1.1";
-    private final Map<String, String> headers = new HashMap<>();
-    private final Map<String, String> queryParams = new HashMap<>();
-    private Map<String, String> cookies = new HashMap<>();
-    private byte[] body = new byte[0];
+    private final String method;
+    private final String target;
+    private final String path;
+    private final String query;
+    private final String version;
+    private final String host;
+    private final Headers headers;
+    private final boolean keepAlive;
+    private final BodyMode bodyMode;
+    private final long contentLength;
+    private final boolean expectContinue;
+    private BodySink body;
 
-    public String getMethod() {
+    Request(String method, String target, String path, String query, String version, String host,
+            Headers headers, boolean keepAlive, BodyMode bodyMode, long contentLength, boolean expectContinue) {
+        this.method = method;
+        this.target = target;
+        this.path = path;
+        this.query = query;
+        this.version = version;
+        this.host = host;
+        this.headers = headers;
+        this.keepAlive = keepAlive;
+        this.bodyMode = bodyMode;
+        this.contentLength = contentLength;
+        this.expectContinue = expectContinue;
+    }
+
+    /** Method exactly as sent (case-sensitive token); unknown methods are the router's business. */
+    public String method() {
         return method;
     }
 
-    public void setMethod(String method) {
-        this.method = method != null ? method.toUpperCase() : "";
+    /** The request target as sent, e.g. "/a%20b/../c?x=1". */
+    public String target() {
+        return target;
     }
 
-    public String getUri() {
-        return uri;
-    }
-
-    public String getPath() {
+    /** Percent-decoded (once) and dot-segment-normalized path, always starting with '/'. */
+    public String path() {
         return path;
     }
 
-    public String getQueryString() {
-        return queryString;
+    /** Raw query string without the '?', "" when absent. */
+    public String query() {
+        return query;
     }
 
-    public boolean isMalformedUri() {
-        return malformedUri;
-    }
-
-    public void setUri(String uri) {
-        this.uri = uri != null ? uri : "";
-        this.malformedUri = false;
-        this.queryParams.clear();
-
-        int q = this.uri.indexOf('?');
-        String rawPath = q >= 0 ? this.uri.substring(0, q) : this.uri;
-        this.queryString = q >= 0 ? this.uri.substring(q + 1) : "";
-
-        try {
-            // '+' is a literal plus in a path, so protect it from URLDecoder
-            this.path = URLDecoder.decode(rawPath.replace("+", "%2B"), StandardCharsets.UTF_8);
-            if (this.path.indexOf('\0') >= 0)
-                malformedUri = true;
-
-            if (!queryString.isEmpty()) {
-                for (String pair : queryString.split("&")) {
-                    if (pair.isEmpty())
-                        continue;
-                    String[] kv = pair.split("=", 2);
-                    String k = URLDecoder.decode(kv[0], StandardCharsets.UTF_8);
-                    String v = kv.length == 2 ? URLDecoder.decode(kv[1], StandardCharsets.UTF_8) : "";
-                    queryParams.putIfAbsent(k, v);
-                }
-            }
-        } catch (IllegalArgumentException e) {
-            this.path = rawPath;
-            this.malformedUri = true;
-        }
-    }
-
-    public String getVersion() {
+    /** "HTTP/1.1" or "HTTP/1.0". */
+    public String version() {
         return version;
     }
 
-    public void setVersion(String version) {
-        this.version = version != null ? version : "HTTP/1.1";
+    /** Lowercase host name without port, used to pick the virtual host; "" when unknown. */
+    public String host() {
+        return host;
     }
 
-    public Map<String, String> getHeaders() {
+    public Headers headers() {
         return headers;
     }
 
-    public String getHeader(String key) {
-        return key == null ? null : headers.get(key.toLowerCase());
+    /** Whether the connection may stay open after the response. */
+    public boolean keepAlive() {
+        return keepAlive;
     }
 
-    public void addHeader(String key, String value) {
-        if (key != null && value != null) {
-            String lowerKey = key.toLowerCase().trim();
-            this.headers.put(lowerKey, value.trim());
-
-            // Automatically parse cookie map if Cookie header is added
-            if ("cookie".equals(lowerKey)) {
-                this.cookies = Cookies.parse(value);
-            }
-        }
+    public BodyMode bodyMode() {
+        return bodyMode;
     }
 
-    /** Host header without the port: "test.com:8080" -> "test.com" */
-    public String getHost() {
-        String h = getHeader("host");
-        if (h == null)
-            return "";
-        if (h.startsWith("[")) { // IPv6 literal
-            int end = h.indexOf(']');
-            return end > 0 ? h.substring(0, end + 1) : h;
-        }
-        int colon = h.lastIndexOf(':');
-        return colon >= 0 ? h.substring(0, colon) : h;
+    /** Declared Content-Length for FIXED bodies; 0 otherwise (a chunked body has no declared size). */
+    public long contentLength() {
+        return contentLength;
     }
 
-    public Map<String, String> getQueryParams() {
-        return queryParams;
+    public boolean expectContinue() {
+        return expectContinue;
     }
 
-    public String getQueryParam(String key) {
-        return queryParams.get(key);
-    }
-
-    public void addQueryParam(String key, String value) {
-        queryParams.put(key, value);
-    }
-
-    public Map<String, String> getCookies() {
-        return cookies;
-    }
-
-    public String getCookie(String name) {
-        return cookies.get(name);
-    }
-
-    public byte[] getBody() {
+    /** The decoded body (null when the request has none). Chunked bodies arrive de-chunked. */
+    public BodySink body() {
         return body;
     }
 
-    public void setBody(byte[] body) {
-        this.body = body != null ? body : new byte[0];
+    void attachBody(BodySink sink) {
+        this.body = sink;
     }
 }

@@ -1,110 +1,55 @@
 package localserver.config;
 
-import java.util.HashMap;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
-public class ServerConfig {
-    private int port = 8080;
-    private String host = "127.0.0.1";
-    private String root = "www";
-    private String defaultFile = "index.html";
-    private long maxBodySize = 10485760; // Default 10 MB limit
-    private Map<String, RouteConfig> routes = new HashMap<>();
+/**
+ * One validated server block. Immutable.
+ *
+ * @param index         position of the block in the config file (for diagnostics)
+ * @param host          bind address ("localhost" is normalized to 127.0.0.1)
+ * @param ports         every port this server listens on
+ * @param serverNames   lowercase names matched against the Host header
+ * @param markedDefault true when the block says "default": true
+ * @param maxBodySize   client body limit in bytes
+ * @param errorPages    status code to existing, readable HTML file
+ * @param routes        sorted longest path first, so the first match is the best match
+ */
+public record ServerConfig(
+        int index,
+        String host,
+        List<Integer> ports,
+        List<String> serverNames,
+        boolean markedDefault,
+        long maxBodySize,
+        Map<Integer, Path> errorPages,
+        List<Route> routes) {
 
-    // NOTE (person B): the target structure extracts routes into a top-level
-    // Route class (see Route.java). RouteConfig is kept here for now so the
-    // migrated ConfigLoader keeps compiling; unify RouteConfig -> Route later.
-    public static class RouteConfig {
-        private String path;
-        private List<String> allowedMethods;
-        private String root;
-        private boolean autoIndex = false;
-        private String defaultFile;
-        private String uploadDir;
+    public ServerConfig {
+        ports = List.copyOf(ports);
+        serverNames = List.copyOf(serverNames);
+        errorPages = Map.copyOf(errorPages);
+        routes = List.copyOf(routes);
+    }
 
-        public RouteConfig(String path, List<String> allowedMethods, String root, boolean autoIndex, String defaultFile,
-                String uploadDir) {
-            this.path = path;
-            this.allowedMethods = allowedMethods;
-            this.root = root;
-            this.autoIndex = autoIndex;
-            this.defaultFile = defaultFile;
-            this.uploadDir = uploadDir;
+    /** "servers[2]": how this block is referred to in messages. */
+    public String label() {
+        return "servers[" + index + "]";
+    }
+
+    /** True if the (already normalized) host name is one of this server's names. */
+    public boolean answersTo(String normalizedHost) {
+        return serverNames.contains(normalizedHost);
+    }
+
+    /** Best matching route for a decoded, normalized URL path, or null (-> 404). */
+    public Route matchRoute(String urlPath) {
+        for (Route r : routes) {
+            if (r.matches(urlPath)) {
+                return r;
+            }
         }
-
-        public String getPath() {
-            return path;
-        }
-
-        public List<String> getAllowedMethods() {
-            return allowedMethods;
-        }
-
-        public String getRoot() {
-            return root;
-        }
-
-        public boolean isAutoIndex() {
-            return autoIndex;
-        }
-
-        public String getDefaultFile() {
-            return defaultFile;
-        }
-
-        public String getUploadDir() {
-            return uploadDir;
-        }
-    }
-
-    // --- Getters & Setters ---
-
-    public int getPort() {
-        return port;
-    }
-
-    public void setPort(int port) {
-        this.port = port;
-    }
-
-    public String getHost() {
-        return host;
-    }
-
-    public void setHost(String host) {
-        this.host = host;
-    }
-
-    public String getRoot() {
-        return root;
-    }
-
-    public void setRoot(String root) {
-        this.root = root;
-    }
-
-    public String getDefaultFile() {
-        return defaultFile;
-    }
-
-    public void setDefaultFile(String defaultFile) {
-        this.defaultFile = defaultFile;
-    }
-
-    public long getMaxBodySize() {
-        return maxBodySize;
-    }
-
-    public void setMaxBodySize(long maxBodySize) {
-        this.maxBodySize = maxBodySize;
-    }
-
-    public Map<String, RouteConfig> getRoutes() {
-        return routes;
-    }
-
-    public void addRoute(String path, RouteConfig route) {
-        this.routes.put(path, route);
+        return null;
     }
 }
