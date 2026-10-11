@@ -1,43 +1,18 @@
-package model;
+package localserver.http;
 
 import java.nio.charset.StandardCharsets;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
-public class HttpResponse {
+public class Response {
     private static final DateTimeFormatter HTTP_DATE = DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'",
             Locale.US);
-
-    private static final Map<Integer, String> REASONS = Map.ofEntries(
-            Map.entry(200, "OK"),
-            Map.entry(201, "Created"),
-            Map.entry(204, "No Content"),
-            Map.entry(301, "Moved Permanently"),
-            Map.entry(302, "Found"),
-            Map.entry(303, "See Other"),
-            Map.entry(307, "Temporary Redirect"),
-            Map.entry(308, "Permanent Redirect"),
-            Map.entry(400, "Bad Request"),
-            Map.entry(403, "Forbidden"),
-            Map.entry(404, "Not Found"),
-            Map.entry(405, "Method Not Allowed"),
-            Map.entry(408, "Request Timeout"),
-            Map.entry(411, "Length Required"),
-            Map.entry(413, "Payload Too Large"),
-            Map.entry(414, "URI Too Long"),
-            Map.entry(431, "Request Header Fields Too Large"),
-            Map.entry(500, "Internal Server Error"),
-            Map.entry(501, "Not Implemented"),
-            Map.entry(502, "Bad Gateway"),
-            Map.entry(504, "Gateway Timeout"),
-            Map.entry(505, "HTTP Version Not Supported"));
 
     private int statusCode = 200;
     private String statusText = "OK";
@@ -45,7 +20,7 @@ public class HttpResponse {
     private final List<String> setCookies = new ArrayList<>();
     private byte[] body = new byte[0];
 
-    public HttpResponse() {
+    public Response() {
         // Standard baseline headers required for HTTP/1.1
         addHeader("Server", "LocalServer/1.0");
         addHeader("Connection", "close");
@@ -57,8 +32,12 @@ public class HttpResponse {
 
     public void setStatus(int statusCode) {
         this.statusCode = statusCode;
-        this.statusText = REASONS.getOrDefault(statusCode, "Unknown");
-        ;
+        this.statusText = Status.reasonFor(statusCode);
+    }
+
+    public void setStatus(Status status) {
+        this.statusCode = status.code;
+        this.statusText = status.reason;
     }
 
     public Map<String, String> getHeaders() {

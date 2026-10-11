@@ -1,4 +1,4 @@
-package config;
+package localserver.config;
 
 import java.io.IOException;
 import java.nio.file.Files;

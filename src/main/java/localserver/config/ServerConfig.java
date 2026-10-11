@@ -1,4 +1,4 @@
-package config;
+package localserver.config;
 
 import java.util.HashMap;
 import java.util.List;
@@ -12,6 +12,9 @@ public class ServerConfig {
     private long maxBodySize = 10485760; // Default 10 MB limit
     private Map<String, RouteConfig> routes = new HashMap<>();
 
+    // NOTE (person B): the target structure extracts routes into a top-level
+    // Route class (see Route.java). RouteConfig is kept here for now so the
+    // migrated ConfigLoader keeps compiling; unify RouteConfig -> Route later.
     public static class RouteConfig {
         private String path;
         private List<String> allowedMethods;

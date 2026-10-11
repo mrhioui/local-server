@@ -1,13 +1,13 @@
-package model;
+package localserver.http;
 
-import utils.Cookie;
+import localserver.session.Cookies;
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
-public class HttpRequest {
+public class Request {
     private String method = "";
     private String uri = ""; // raw, as received: /a%20b?x=1
     private String path = ""; // decoded, no query: /a b
@@ -97,7 +97,7 @@ public class HttpRequest {
 
             // Automatically parse cookie map if Cookie header is added
             if ("cookie".equals(lowerKey)) {
-                this.cookies = Cookie.parse(value);
+                this.cookies = Cookies.parse(value);
             }
         }
     }

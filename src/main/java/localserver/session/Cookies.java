@@ -1,9 +1,9 @@
-package utils;
+package localserver.session;
 
 import java.util.HashMap;
 import java.util.Map;
 
-public class Cookie {
+public class Cookies {
 
     /**
      * Parses the raw "Cookie" request header string into key-value pairs.
