@@ -1,16 +1,18 @@
 package localserver.session;
 
+import java.security.SecureRandom;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
 
 public class Session {
 
     public static final int TTL_SECONDS = 30 * 60; // use as Max-Age in the cookie
     private static final long TTL_MS = TTL_SECONDS * 1000L;
     private static final int MAX_SESSIONS = 10_000;
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private static class Entry {
         final Map<String, Object> data = new HashMap<>();
@@ -19,6 +21,13 @@ public class Session {
 
     // accessOrder=true: least recently used entries sit at the head of the map
     private static final Map<String, Entry> SESSIONS = new LinkedHashMap<>(16, 0.75f, true);
+
+    /**
+     * Sweeps expired sessions from the store.
+     */
+    public static synchronized void sweep() {
+        purgeExpired();
+    }
 
     /**
      * Creates a new session and returns its unique token.
@@ -33,7 +42,9 @@ public class Session {
             it.remove();
         }
 
-        String id = UUID.randomUUID().toString();
+        byte[] bytes = new byte[16];
+        RANDOM.nextBytes(bytes);
+        String id = HexFormat.of().formatHex(bytes);
         SESSIONS.put(id, new Entry());
         return id;
     }
