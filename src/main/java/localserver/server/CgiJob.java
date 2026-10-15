@@ -118,7 +118,7 @@ public class CgiJob {
         env.put("SERVER_SOFTWARE", "LocalServer/1.0");
         env.put("REQUEST_METHOD", request.method());
         env.put("SCRIPT_NAME", request.path());
-        env.put("PATH_INFO", "");
+        env.put("PATH_INFO", scriptPath.toAbsolutePath().toString());
         env.put("QUERY_STRING", request.query() != null ? request.query() : "");
         env.put("REMOTE_ADDR", "127.0.0.1");
         env.put("SERVER_NAME", request.host() != null && !request.host().isEmpty() ? request.host() : "localhost");

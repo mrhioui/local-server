@@ -90,9 +90,10 @@ public class CgiHandlerTest {
                 import os, sys
                 method = os.environ.get("REQUEST_METHOD", "")
                 query = os.environ.get("QUERY_STRING", "")
+                path_info = os.environ.get("PATH_INFO", "")
                 auth = os.environ.get("HTTP_AUTHORIZATION", "")
                 body = sys.stdin.read()
-                print("Content-Type: text/plain\\r\\n\\r\\n" + f"{method}|{query}|{auth}|{body}")
+                print("Content-Type: text/plain\\r\\n\\r\\n" + f"{method}|{query}|{auth}|{body}|{path_info}")
                 """);
 
         Route route = createRoute("/cgi-bin", tempDir, Map.of(".py", "/usr/bin/python3"));
@@ -107,7 +108,7 @@ public class CgiHandlerTest {
 
         assertEquals(200, response.getStatusCode());
         String out = new String(response.getBody(), StandardCharsets.UTF_8);
-        assertTrue(out.contains("POST|a=1&b=2|Bearer secret123|client_payload"));
+        assertTrue(out.contains("POST|a=1&b=2|Bearer secret123|client_payload|" + script.toAbsolutePath()));
     }
 
     @Test
