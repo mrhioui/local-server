@@ -6,7 +6,6 @@ import localserver.http.Request;
 
 /**
  * Matches an incoming request to a configured route and validates the HTTP method.
- *
  */
 public class Router {
     private final ServerConfig config;
@@ -31,27 +30,41 @@ public class Router {
      * </ul>
      */
     public RouteResult route(Request request) {
-        String urlPath = request.path();
+        if (config == null || request == null) {
+            return new RouteResult(null, "", 404);
+        }
+
+        String path = request.path();
 
         // ServerConfig.matchRoute returns the longest-prefix matching route (routes are sorted
         // longest-first by ConfigLoader/ConfigValidator).
-        Route matched = config.matchRoute(urlPath);
-
+        Route matched = config.matchRoute(path);
         if (matched == null) {
-            // No route at all → 404
-            return new RouteResult(null, urlPath, 404);
+            // No route at all -> 404
+            return new RouteResult(null, "", 404);
         }
 
+        // Strip the route prefix to get the path relative to the route root
+        String prefix = matched.path();
+        String rel;
+        if (prefix.equals("/")) {
+            rel = path.startsWith("/") ? path.substring(1) : path;
+        } else if (path.equals(prefix)) {
+            rel = "";
+        } else if (path.startsWith(prefix + "/")) {
+            rel = path.substring(prefix.length() + 1);
+        } else {
+            rel = path.substring(prefix.length());
+            if (rel.startsWith("/")) {
+                rel = rel.substring(1);
+            }
+        }
+
+        // Route found but method not permitted -> 405
         if (!matched.allows(request.method())) {
-            // Route found but method not permitted → 405
-            return new RouteResult(matched, urlPath, 405);
+            return new RouteResult(matched, rel, 405);
         }
 
-        // Strip the route prefix to get the relative path within the root
-        String prefix   = matched.path().equals("/") ? "" : matched.path();
-        String relative = urlPath.substring(prefix.length());
-        if (relative.isEmpty()) relative = "/";
-
-        return new RouteResult(matched, relative, 200);
+        return new RouteResult(matched, rel, 200);
     }
 }

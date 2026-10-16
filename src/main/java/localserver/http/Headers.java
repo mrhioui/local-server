@@ -14,7 +14,7 @@ public final class Headers {
     private final Map<String, List<String>> map = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
     private int count;
 
-    void add(String name, String value) {
+    public void add(String name, String value) {
         map.computeIfAbsent(name, k -> new ArrayList<>()).add(value);
         count++;
     }

@@ -1,11 +1,14 @@
 package localserver.handler;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 
 /**
  * Resolves and validates filesystem paths for a route (prevents traversal
  * outside the route root).
- *
  */
 public final class PathResolver {
 
@@ -13,36 +16,61 @@ public final class PathResolver {
     }
 
     /**
-     * Resolve {@code relativePath} against {@code root}, returning a safe absolute path string,
-     * or {@code null} if the result would escape the root (path traversal attempt).
-     *
-     * @param root         absolute root directory (e.g. "/var/www")
-     * @param relativePath URL path segment after the route prefix (may start with '/')
-     * @return absolute path string, or null on traversal / bad input
+     * Resolve a request path against a route root directory, returning a safe Path,
+     * or null if it would escape the root, contains hidden/dot segments, or is invalid.
      */
-    public static String resolve(String root, String relativePath) {
-        if (root == null || relativePath == null) return null;
-        try {
-            Path base     = Path.of(root).normalize().toAbsolutePath();
-            // strip leading slash so Path.resolve doesn't treat it as absolute
-            String rel    = relativePath.startsWith("/") ? relativePath.substring(1) : relativePath;
-            Path resolved = base.resolve(rel).normalize().toAbsolutePath();
-
-            // Traversal check: resolved must start with base
-            if (!resolved.startsWith(base)) {
-                return null;
-            }
-            return resolved.toString();
-        } catch (Exception e) {
+    public static Path resolve(Path root, String relativePath) {
+        if (root == null) {
             return null;
         }
-    }
+        try {
+            Path realRoot = root.toRealPath();
+            if (relativePath == null) {
+                return realRoot;
+            }
+            while (relativePath.startsWith("/")) {
+                relativePath = relativePath.substring(1);
+            }
+            if (relativePath.isEmpty()) {
+                return realRoot;
+            }
 
-    /**
-     * Same as {@link #resolve(String, String)} but accepting {@link Path} roots
-     * (convenience overload for callers that already have a Path).
-     */
-    public static String resolve(Path root, String relativePath) {
-        return root == null ? null : resolve(root.toAbsolutePath().toString(), relativePath);
+            // Reject hidden/dot segments (this includes ".."), NUL bytes and backslashes
+            for (String seg : relativePath.split("/")) {
+                if (seg.isEmpty() || seg.equals(".")) {
+                    continue;
+                }
+                if (seg.startsWith(".") || seg.indexOf('\0') >= 0 || seg.contains("\\")) {
+                    return null;
+                }
+            }
+
+            Path resolved = realRoot.resolve(relativePath).normalize();
+
+            // Lexical containment check
+            if (!resolved.startsWith(realRoot)) {
+                return null;
+            }
+
+            // Symlink check: take the nearest ancestor that exists (the target itself if
+            // it exists) and make sure its real path is still inside the root. This also
+            // covers paths that don't exist yet (uploads / PUT), where a symlinked parent
+            // directory could otherwise redirect a write outside the root.
+            Path existing = resolved;
+            while (existing != null && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
+                existing = existing.getParent();
+            }
+            if (existing == null) {
+                return null;
+            }
+            Path realExisting = existing.toRealPath(); // throws on a dangling symlink -> null
+            if (!realExisting.startsWith(realRoot)) {
+                return null;
+            }
+
+            return existing.equals(resolved) ? realExisting : resolved;
+        } catch (IOException | InvalidPathException e) {
+            return null;
+        }
     }
 }

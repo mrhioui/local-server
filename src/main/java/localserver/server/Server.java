@@ -21,6 +21,7 @@ import localserver.config.ListenerSpec;
 import localserver.config.LoadedConfig;
 import localserver.config.Settings;
 import localserver.http.HttpDate;
+import localserver.session.Session;
 import localserver.util.Log;
 
 /**
@@ -264,6 +265,7 @@ public final class Server {
     // ---- timeouts and cleanup ----------------------------------------------------------------------
 
     private void sweep(long now) {
+        Session.sweep();
         List<SelectionKey> expired = null;
         for (SelectionKey key : selector.keys()) {
             if (key.attachment() instanceof Connection c && c.timeoutReason(now, settings) != null) {

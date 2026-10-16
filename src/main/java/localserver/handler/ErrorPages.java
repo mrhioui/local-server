@@ -13,7 +13,17 @@ import java.nio.file.Path;
  * Builds error responses, using configured custom error pages when present
  * and falling back to a generated page otherwise.
  *
+ * STUB (person B).
  */
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+import localserver.config.ServerConfig;
+import localserver.http.Response;
+import localserver.http.Status;
+
 public final class ErrorPages {
 
     private ErrorPages() {
@@ -26,36 +36,27 @@ public final class ErrorPages {
         return render(statusCode, null);
     }
 
-    /**
-     * Build an error response. If {@code config} contains a custom error page for
-     * {@code statusCode}, its HTML file is read and served; otherwise a minimal HTML
-     * page is generated inline.
-     */
     public static Response render(int statusCode, ServerConfig config) {
-        String reason = Status.reasonFor(statusCode);
+        Response response = new Response();
+        response.setStatus(statusCode);
 
-        // Try custom error page from server config
         if (config != null) {
-            Path customPage = config.errorPages().get(statusCode);
-            if (customPage != null && Files.isReadable(customPage)) {
+            Map<Integer, Path> customPages = config.errorPages();
+            Path customPath = customPages != null ? customPages.get(statusCode) : null;
+            if (customPath != null && Files.isRegularFile(customPath) && Files.isReadable(customPath)) {
                 try {
-                    byte[] bytes = Files.readAllBytes(customPage);
-                    Response r = new Response();
-                    r.setStatus(statusCode);
-                    r.setBody(bytes, "text/html; charset=utf-8");
-                    return r;
+                    byte[] content = Files.readAllBytes(customPath);
+                    response.setBody(content, "text/html; charset=utf-8");
+                    return response;
                 } catch (IOException ignored) {
-                    // fall through to generated page
+                    // Fall back to built-in page
                 }
             }
         }
 
-        // Generated fallback
+        String reason = Status.reason(statusCode);
         String html = Html.errorPage(statusCode, reason);
-        byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
-        Response r = new Response();
-        r.setStatus(statusCode);
-        r.setBody(bytes, "text/html; charset=utf-8");
-        return r;
+        response.setBody(html.getBytes(StandardCharsets.UTF_8), "text/html; charset=utf-8");
+        return response;
     }
 }

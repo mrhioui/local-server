@@ -13,8 +13,15 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import localserver.config.ListenerSpec;
+import localserver.config.Route;
 import localserver.config.ServerConfig;
 import localserver.config.Settings;
+import localserver.handler.CgiHandler;
+import localserver.handler.DeleteHandler;
+import localserver.handler.ErrorPages;
+import localserver.handler.RedirectHandler;
+import localserver.handler.StaticHandler;
+import localserver.handler.UploadHandler;
 import localserver.http.BodySink;
 import localserver.http.FileBodySink;
 import localserver.http.HeadDecision;
@@ -22,7 +29,13 @@ import localserver.http.HttpParser;
 import localserver.http.MemoryBodySink;
 import localserver.http.ParseError;
 import localserver.http.Request;
+import localserver.http.Response;
 import localserver.http.Status;
+import localserver.session.Cookies;
+import localserver.session.Session;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
  * Everything the server knows about one client: its buffers, its progress through the current
@@ -175,7 +188,7 @@ final class Connection {
                         : FileBodySink.create(server.tempDir()));
     }
 
-    /** A complete, valid request: M3 answers with a description of what was parsed. */
+    /** Routes and answers a complete, valid request. */
     private void handle(Request request) {
         boolean keepAlive = request.keepAlive();
         After next = keepAlive ? After.NEXT_REQUEST : After.CLOSE;
@@ -183,7 +196,119 @@ final class Connection {
             respond(response(405, "405 Method Not Allowed\n", !keepAlive, "Allow: GET, POST, DELETE\r\n"), next);
             return;
         }
-        respond(response(200, echo(request), !keepAlive, ""), next);
+
+        Route route = selected != null ? selected.matchRoute(request.path()) : null;
+        if (route == null) {
+            respond(renderError(404, keepAlive), next);
+            return;
+        }
+
+        // Check for M3 echo fallback when root is empty and no specialized features are configured
+        if (route.redirect() == null && route.cgi().isEmpty() && !route.autoindex() && isRootEmpty(route.root())) {
+            respond(response(200, echo(request), !keepAlive, ""), next);
+            return;
+        }
+
+        if (!route.allows(request.method())) {
+            Response err = ErrorPages.render(405, selected);
+            err.addHeader("Allow", route.allowHeader());
+            respond(wrapResponse(err, request, keepAlive), next);
+            return;
+        }
+
+        // 1. Redirect
+        if (route.redirect() != null) {
+            Response res = new RedirectHandler().handle(request, route);
+            respond(wrapResponse(res, request, keepAlive), next);
+            return;
+        }
+
+        // 2. Relative path for CGI / Static / Upload / Delete
+        String rel = extractRel(request.path(), route.path());
+
+        // 3. CGI
+        String scriptName = rel.isEmpty() && route.index() != null ? route.index() : rel;
+        if (route.interpreterFor(scriptName) != null) {
+            Response res = new CgiHandler(server.tempDir(), 10_000_000_000L).handle(request, route);
+            respond(wrapResponse(res, request, keepAlive), next);
+            return;
+        }
+
+        // 4. Upload (POST)
+        if (request.method().equals("POST")) {
+            Response res = new UploadHandler().handle(request, route);
+            respond(wrapResponse(res, request, keepAlive), next);
+            return;
+        }
+
+        // 5. Delete (DELETE)
+        if (request.method().equals("DELETE")) {
+            Response res = new DeleteHandler().handle(request, route);
+            respond(wrapResponse(res, request, keepAlive), next);
+            return;
+        }
+
+        // 6. Static files (GET)
+        if (request.method().equals("GET")) {
+            Response res = new StaticHandler().handle(request, route);
+            respond(wrapResponse(res, request, keepAlive), next);
+            return;
+        }
+
+        respond(renderError(405, keepAlive), next);
+    }
+
+    private byte[] wrapResponse(Response res, Request request, boolean keepAlive) {
+        res.addHeader("Connection", keepAlive ? "keep-alive" : "close");
+        res.addHeader("Date", server.date());
+        ensureSession(res, request);
+        return res.getBytes();
+    }
+
+    private byte[] renderError(int code, boolean keepAlive) {
+        Response err = ErrorPages.render(code, selected);
+        err.addHeader("Connection", keepAlive ? "keep-alive" : "close");
+        err.addHeader("Date", server.date());
+        return err.getBytes();
+    }
+
+    private void ensureSession(Response res, Request request) {
+        if (request == null) return;
+        String cookieHeader = request.headers().first("cookie");
+        Map<String, String> cookies = Cookies.parse(cookieHeader);
+        String sid = cookies.get("SID");
+        if (sid == null || Session.getSession(sid) == null) {
+            sid = Session.createSession();
+            res.addSetCookie(Cookies.formatSetCookie("SID", sid, "/", true, Session.TTL_SECONDS));
+        }
+    }
+
+    private static boolean isRootEmpty(Path root) {
+        if (root == null || !Files.exists(root) || !Files.isDirectory(root)) {
+            return true;
+        }
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(root)) {
+            return !stream.iterator().hasNext();
+        } catch (IOException e) {
+            return true;
+        }
+    }
+
+    private static String extractRel(String reqPath, String prefix) {
+        String rel;
+        if (prefix.equals("/")) {
+            rel = reqPath.startsWith("/") ? reqPath.substring(1) : reqPath;
+        } else if (reqPath.equals(prefix)) {
+            rel = "";
+        } else if (reqPath.startsWith(prefix + "/")) {
+            rel = reqPath.substring(prefix.length() + 1);
+        } else {
+            rel = reqPath.substring(prefix.length());
+            if (rel.startsWith("/")) {
+                rel = rel.substring(1);
+            }
+        }
+        return rel;
     }
 
     /** A request we will not serve (malformed, too large, refused): answer, then linger and close. */

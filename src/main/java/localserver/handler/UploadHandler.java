@@ -1,128 +1,197 @@
 package localserver.handler;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import localserver.config.Route;
 import localserver.http.Request;
 import localserver.http.Response;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
-
 /**
  * Handles file uploads (multipart and raw body). Was PostHandler.
- *
  */
 public class UploadHandler implements Handler {
 
+
     @Override
     public Response handle(Request request, Route route) {
-        // ── body-size check ───────────────────────────────────────────────────
-        long maxBody = route.root() != null ? Long.MAX_VALUE : Long.MAX_VALUE;
-        // ServerConfig is accessible via the route's enclosing context; we guard on
-        // Content-Length when available (chunked bodies are checked after reading).
-        if (request.contentLength() > 0) {
-            // We'd need ServerConfig here; for now we compare against a safe default.
-            // Person A passes the real limit when constructing the handler via HandlerContext.
+        if (route == null || route.root() == null) {
+            return ErrorPages.render(404);
         }
 
-        if (request.body() == null) {
-            // No body → 400
+        // Strip the route prefix to get the path relative to the route root
+        String prefix = route.path();
+        String reqPath = request.path();
+        String rel;
+        if (prefix.equals("/")) {
+            rel = reqPath.startsWith("/") ? reqPath.substring(1) : reqPath;
+        } else if (reqPath.equals(prefix)) {
+            rel = "";
+        } else if (reqPath.startsWith(prefix + "/")) {
+            rel = reqPath.substring(prefix.length() + 1);
+        } else {
+            rel = reqPath.substring(prefix.length());
+            if (rel.startsWith("/")) {
+                rel = rel.substring(1);
+            }
+        }
+        while (rel.endsWith("/")) {
+            rel = rel.substring(0, rel.length() - 1);
+        }
+
+        String contentType = contentType(request);
+        byte[] body = bodyBytes(request);
+
+        if (contentType.toLowerCase(Locale.ROOT).startsWith("multipart/form-data")) {
+            return handleMultipart(route, rel, contentType, body);
+        }
+        return handleRaw(route, rel, reqPath, body);
+    }
+
+    // ── multipart: POST /dir  with one or more file parts ────────────────────
+
+    private Response handleMultipart(Route route, String rel, String contentType, byte[] body) {
+        String boundary = extractBoundary(contentType);
+        if (boundary == null) {
             return ErrorPages.render(400);
         }
 
-        // Determine upload directory
-        Path uploadDir = route.root() != null ? route.root().resolve("uploads") : null;
-        if (uploadDir == null) {
-            return ErrorPages.render(500);
+        Path dir = PathResolver.resolve(route.root(), rel);
+        if (dir == null) {
+            return ErrorPages.render(403);
+        }
+        if (!Files.isDirectory(dir)) {
+            return ErrorPages.render(404);
         }
 
-        try {
-            Files.createDirectories(uploadDir);
-        } catch (IOException e) {
-            return ErrorPages.render(500);
-        }
-
-        // ── multipart/form-data ───────────────────────────────────────────────
-        String contentType = request.headers().first("Content-Type");
-        if (contentType != null) {
-            String lower = contentType.toLowerCase(java.util.Locale.ROOT);
-            if (lower.startsWith("multipart/form-data")) {
-                String boundary = extractBoundary(contentType);
-                if (boundary == null) return ErrorPages.render(400);
-
-                byte[] rawBody = readBody(request);
-                if (rawBody == null) return ErrorPages.render(500);
-
-                List<MultipartParser.Part> parts = MultipartParser.parse(rawBody, boundary);
-                if (parts.isEmpty()) return ErrorPages.render(400);
-
-                for (MultipartParser.Part part : parts) {
-                    String filename = part.filename != null ? sanitize(part.filename)
-                                                            : (part.name != null ? sanitize(part.name) : "upload.bin");
-                    File dest = new File(uploadDir.toFile(), filename);
-                    try {
-                        Files.write(dest.toPath(), part.content);
-                    } catch (IOException e) {
-                        return ErrorPages.render(500);
-                    }
-                }
-
-                Response r = new Response();
-                r.setStatus(201);
-                r.setBody("Uploaded successfully.".getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                           "text/plain; charset=utf-8");
-                return r;
+        List<String> saved = new ArrayList<>();
+        for (MultipartParser.Part part : MultipartParser.parse(body, boundary)) {
+            if (part.filename == null || part.filename.isEmpty()) {
+                continue; // plain form field, not a file
             }
+            String name = sanitizeFilename(part.filename);
+            if (name == null) {
+                return ErrorPages.render(400);
+            }
+
+            String destRel = rel.isEmpty() ? name : rel + "/" + name;
+            Path dest = PathResolver.resolve(route.root(), destRel);
+            if (dest == null || !dir.equals(dest.getParent())) {
+                return ErrorPages.render(403);
+            }
+            if (Files.isDirectory(dest)) {
+                return ErrorPages.render(409);
+            }
+
+            try {
+                write(dest, part.content);
+            } catch (IOException e) {
+                return ErrorPages.render(500);
+            }
+            saved.add(name);
         }
 
-        // ── raw body fallback ─────────────────────────────────────────────────
-        byte[] rawBody = readBody(request);
-        if (rawBody == null) return ErrorPages.render(500);
+        if (saved.isEmpty()) {
+            return ErrorPages.render(400);
+        }
+        return created(String.join("\n", saved) + "\n", null);
+    }
 
-        File dest = new File(uploadDir.toFile(), "upload.bin");
+    // ── raw body: POST /dir/name.ext  with the file as the body ──────────────
+
+    private Response handleRaw(Route route, String rel, String reqPath, byte[] body) {
+        if (rel.isEmpty()) {
+            return ErrorPages.render(400); // no target filename
+        }
+
+        Path dest = PathResolver.resolve(route.root(), rel);
+        if (dest == null) {
+            return ErrorPages.render(403);
+        }
+        Path parent = dest.getParent();
+        if (parent == null || !Files.isDirectory(parent)) {
+            return ErrorPages.render(404);
+        }
+        if (Files.isDirectory(dest)) {
+            return ErrorPages.render(409);
+        }
+
         try {
-            Files.write(dest.toPath(), rawBody);
+            write(dest, body);
         } catch (IOException e) {
             return ErrorPages.render(500);
         }
-
-        Response r = new Response();
-        r.setStatus(201);
-        r.setBody("Uploaded successfully.".getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                   "text/plain; charset=utf-8");
-        return r;
+        return created("Created " + dest.getFileName() + "\n", reqPath);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private byte[] readBody(Request request) {
-        try (InputStream in = request.body().openRead()) {
-            return in.readAllBytes();
-        } catch (IOException e) {
+    /** Write via a hidden temp file in the same directory, then move into place. */
+    private static void write(Path dest, byte[] content) throws IOException {
+        Path tmp = Files.createTempFile(dest.getParent(), ".upload-", ".tmp");
+        try {
+            Files.write(tmp, content);
+            Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
+    }
+
+    private static Response created(String text, String location) {
+        Response r = new Response();
+        r.setStatus(201);
+        if (location != null) {
+            r.addHeader("Location", location);
+        }
+        r.setBody(text.getBytes(StandardCharsets.UTF_8), "text/plain; charset=utf-8");
+        return r;
+    }
+
+    /** Keep only the last path segment; reject empty, hidden or malformed names. */
+    private static String sanitizeFilename(String filename) {
+        String name = filename;
+        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+        if (slash >= 0) {
+            name = name.substring(slash + 1);
+        }
+        name = name.trim();
+        if (name.isEmpty() || name.startsWith(".") || name.indexOf('\0') >= 0) {
             return null;
         }
+        return name;
     }
 
-    private String extractBoundary(String contentType) {
-        for (String token : contentType.split(";")) {
-            token = token.trim();
-            if (token.toLowerCase(java.util.Locale.ROOT).startsWith("boundary=")) {
-                return token.substring("boundary=".length()).trim();
-            }
+    private static String extractBoundary(String contentType) {
+        int idx = contentType.toLowerCase(Locale.ROOT).indexOf("boundary=");
+        if (idx < 0) {
+            return null;
         }
-        return null;
+        String b = contentType.substring(idx + "boundary=".length());
+        int semi = b.indexOf(';');
+        if (semi >= 0) {
+            b = b.substring(0, semi);
+        }
+        b = b.trim();
+        if (b.length() >= 2 && b.startsWith("\"") && b.endsWith("\"")) {
+            b = b.substring(1, b.length() - 1);
+        }
+        return b.isEmpty() ? null : b;
     }
 
-    /** Strip path components and dangerous characters from uploaded filenames. */
-    private String sanitize(String name) {
-        // Keep only the last component after / or \
-        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-        if (slash >= 0) name = name.substring(slash + 1);
-        // Replace any character that's not word-char, dot, or hyphen
-        name = name.replaceAll("[^\\w.\\-]", "_");
-        return name.isEmpty() ? "upload.bin" : name;
+    // ── adapt these two to your Request class ────────────────────────────────
+
+    private static String contentType(Request request) {
+        String ct = request.header("Content-Type");
+        return ct == null ? "" : ct;
+    }
+
+    private static byte[] bodyBytes(Request request) {
+        byte[] b = request.body();
+        return b == null ? new byte[0] : b;
     }
 }

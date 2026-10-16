@@ -22,6 +22,30 @@ public final class Request {
     private final boolean expectContinue;
     private BodySink body;
 
+    public static Request of(String method, String path, String host) {
+        return of(method, path, host, null, null);
+    }
+
+    public static Request of(String method, String target, String host, Headers headers, BodySink body) {
+        Headers h = headers != null ? headers : new Headers();
+        if (host != null && h.first("Host") == null) {
+            h.add("Host", host);
+        }
+        String p = target;
+        String q = "";
+        int qIdx = target != null ? target.indexOf('?') : -1;
+        if (qIdx >= 0) {
+            p = target.substring(0, qIdx);
+            q = target.substring(qIdx + 1);
+        }
+        Request r = new Request(method, target != null ? target : "", p != null ? p : "", q, "HTTP/1.1",
+                host != null ? host : "", h, true,
+                body != null ? BodyMode.FIXED : BodyMode.NONE, body != null ? body.size() : 0, false);
+        r.attachBody(body);
+        return r;
+    }
+
+
     Request(String method, String target, String path, String query, String version, String host,
             Headers headers, boolean keepAlive, BodyMode bodyMode, long contentLength, boolean expectContinue) {
         this.method = method;
