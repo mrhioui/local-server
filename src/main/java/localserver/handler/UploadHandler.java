@@ -17,7 +17,6 @@ import localserver.http.Response;
  */
 public class UploadHandler implements Handler {
 
-
     @Override
     public Response handle(Request request, Route route) {
         if (route == null || route.root() == null) {
@@ -186,12 +185,16 @@ public class UploadHandler implements Handler {
     // ── adapt these two to your Request class ────────────────────────────────
 
     private static String contentType(Request request) {
-        String ct = request.header("Content-Type");
+        String ct = request.headers().first("Content-Type");
         return ct == null ? "" : ct;
     }
 
     private static byte[] bodyBytes(Request request) {
-        byte[] b = request.body();
-        return b == null ? new byte[0] : b;
+        if (request.body() == null) return new byte[0];
+        try (java.io.InputStream in = request.body().openRead()) {
+            return in.readAllBytes();
+        } catch (java.io.IOException e) {
+            return new byte[0];
+        }
     }
 }
