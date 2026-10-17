@@ -114,7 +114,7 @@ public class UploadHandler implements Handler {
         if (rel.isEmpty()) {
             return ErrorPages.render(400); // no target filename
         }
-        if (body == null || body.length == 0) {
+        if (body == null || body.length == 0) {//TODO: remove
             return ErrorPages.render(400);
         }
 

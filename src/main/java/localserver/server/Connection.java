@@ -218,7 +218,7 @@ final class Connection {
             return;
         }
 
-        // Check for M3 echo fallback when root is empty and no specialized features are configured
+         //TODO: Check for M3 echo fallback when root is empty and no specialized features are configured
         if (route.redirect() == null && route.cgi().isEmpty() && !route.autoindex() && isRootEmpty(route.root())) {
             respond(response(200, echo(request), !keepAlive, ""), next);
             return;
