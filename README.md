@@ -1,7 +1,7 @@
 # LocalServer
 
 A single-threaded, non-blocking HTTP/1.1 server in Java (`java.nio`, no frameworks).
-Built milestone by milestone. **Current state: M3 (configuration, event loop, HTTP parser; valid requests are answered with an echo of what was parsed).**
+Built milestone by milestone. **Current state: Complete (M0 through M8: configuration, non-blocking event loop, strict HTTP parser, routing, file uploads, DELETE, cookies/sessions, multi-CGI handlers, custom error pages, and metrics dashboard).**
 
 ## Build and run
 
@@ -102,8 +102,8 @@ Unknown keys are errors (a typo must not be silently ignored).
 - [x] M1 config: JSON parser, validation, listeners, virtual host selection
 - [x] M2 event loop: one Selector, accept/read/write, two-clock timeouts, connection cap, idempotent close
 - [x] M3 HTTP parser: strict head, fixed + chunked bodies, per-host limits, Expect, lingering close
-- [ ] M4 router, static files, error pages, redirects, directory listing
-- [ ] M5 uploads and DELETE
-- [ ] M6 cookies and sessions
-- [ ] M7 CGI
-- [ ] M8 hardening, siege, leak checks, bonus
+- [x] M4 router, static files, error pages, redirects, directory listing
+- [x] M5 uploads and DELETE
+- [x] M6 cookies and sessions
+- [x] M7 CGI
+- [x] M8 hardening, siege, leak checks, bonus

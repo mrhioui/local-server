@@ -109,6 +109,7 @@ public class StaticHandler implements Handler {
         try {
             long size = Files.size(file);
             if (size > MAX_STATIC_FILE_SIZE) {
+                System.out.println(size);
                 return ErrorPages.render(413);
             }
             byte[] bytes = Files.readAllBytes(file);

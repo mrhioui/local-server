@@ -81,10 +81,11 @@ class ServerTest {
 
     // ---- helpers ---------------------------------------------------------------------------------
 
-    private static int freePort() throws IOException {
-        try (ServerSocket s = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
-            return s.getLocalPort();
-        }
+    private static final java.util.concurrent.atomic.AtomicInteger NEXT_PORT =
+            new java.util.concurrent.atomic.AtomicInteger(20000);
+
+    private static int freePort() {
+        return NEXT_PORT.incrementAndGet();
     }
 
     private Server start(String settingsJson, int... ports) throws Exception {

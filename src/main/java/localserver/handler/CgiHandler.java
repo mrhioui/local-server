@@ -105,4 +105,3 @@ public class CgiHandler implements Handler {
         return job.finish();
     }
 }
-

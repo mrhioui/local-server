@@ -19,6 +19,7 @@ import localserver.config.Settings;
 import localserver.handler.CgiHandler;
 import localserver.handler.DeleteHandler;
 import localserver.handler.ErrorPages;
+import localserver.handler.MetricsHandler;
 import localserver.handler.RedirectHandler;
 import localserver.handler.StaticHandler;
 import localserver.handler.UploadHandler;
@@ -202,6 +203,12 @@ final class Connection {
         After next = keepAlive ? After.NEXT_REQUEST : After.CLOSE;
         if (!SUPPORTED_METHODS.contains(request.method())) {
             respond(response(405, "405 Method Not Allowed\n", !keepAlive, "Allow: GET, POST, DELETE\r\n"), next);
+            return;
+        }
+
+        if (request.path().equals("/metrics") || request.path().equals("/admin/metrics")) {
+            Response res = new MetricsHandler(server).handle(request, null);
+            respond(wrapResponse(res, request, keepAlive), next);
             return;
         }
 

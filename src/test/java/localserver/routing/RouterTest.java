@@ -92,4 +92,14 @@ class RouterTest {
         assertNull(res.getRoute());
         assertEquals("", res.getRelativePath());
     }
+    @Test
+    void returns405WhenMethodNotAllowed() {
+        Route rootRoute = new Route("/", Set.of("GET"), Path.of("/var/www"), "index.html", false, null, Map.of());
+        Router router = new Router(createServerConfig(List.of(rootRoute)));
+        RouteResult res = router.route(Request.of("DELETE", "/index.html", "example.com"));
+        assertFalse(res.isMatched());
+        assertEquals(405, res.getStatusHint());
+        assertNotNull(res.getRoute());
+    }
 }
+

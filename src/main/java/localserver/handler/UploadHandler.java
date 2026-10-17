@@ -46,6 +46,10 @@ public class UploadHandler implements Handler {
         String contentType = contentType(request);
         byte[] body = bodyBytes(request);
 
+        if (request.body() == null || body.length == 0) {
+            return ErrorPages.render(400);
+        }
+
         if (contentType.toLowerCase(Locale.ROOT).startsWith("multipart/form-data")) {
             return handleMultipart(route, rel, contentType, body);
         }
@@ -114,11 +118,16 @@ public class UploadHandler implements Handler {
             return ErrorPages.render(400);
         }
 
+        String fileName = rel.contains("/") ? rel.substring(rel.lastIndexOf('/') + 1) : rel;
+        if (route.interpreterFor(fileName) != null) {
+            return ErrorPages.render(403);
+        }
+
         Path dest = PathResolver.resolve(route.root(), rel);
         if (dest == null) {
             return ErrorPages.render(403);
         }
-        String fileName = dest.getFileName().toString();
+        fileName = dest.getFileName().toString();
         if (sanitizeFilename(fileName) == null) {
             return ErrorPages.render(403);
         }
