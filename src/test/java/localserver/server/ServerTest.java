@@ -857,4 +857,53 @@ class ServerTest {
         loop.join(5000);
         assertFalse(Files.exists(dir));
     }
+
+    @Test
+    void slowCgiScriptDoesNotBlockConcurrentStaticRequest() throws Exception {
+        int port = freePort();
+        Path cgiDir = base.resolve("www").resolve("cgi");
+        Files.createDirectories(cgiDir);
+        Path slowScript = cgiDir.resolve("slow.py");
+        Files.writeString(slowScript, """
+                import time
+                time.sleep(1.2)
+                print("Content-Type: text/plain\\r\\n\\r\\nDone")
+                """);
+        Path staticFile = base.resolve("www").resolve("index.html");
+        Files.writeString(staticFile, "Hello Static");
+
+        String json = """
+                {
+                  "servers": [{
+                    "ports": [%d],
+                    "routes": [
+                      {"path": "/cgi-bin", "root": "www/cgi", "methods": ["GET"], "cgi": {".py": "/usr/bin/python3"}},
+                      {"path": "/", "root": "www", "methods": ["GET"]}
+                    ]
+                  }]
+                }
+                """.formatted(port);
+        startJson(json);
+
+        // Client 1 launches slow CGI
+        Client c1 = new Client(port);
+        c1.send("GET /cgi-bin/slow.py HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+        // Small pause to ensure C1's request is read and CGI starts
+        Thread.sleep(100);
+
+        // Client 2 requests static file concurrently
+        long t0 = System.nanoTime();
+        Client c2 = new Client(port);
+        c2.send("GET /index.html HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        Response r2 = c2.read();
+        long client2DurationMs = (System.nanoTime() - t0) / 1_000_000;
+
+        assertEquals(200, r2.status());
+        assertTrue(client2DurationMs < 600,
+                "client 2 must not be blocked by slow CGI running on client 1 (took " + client2DurationMs + " ms)");
+
+        Response r1 = c1.read();
+        assertEquals(200, r1.status());
+    }
 }

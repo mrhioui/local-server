@@ -47,6 +47,7 @@ public final class Server {
     private final Path tempDir;
     private final List<Listener> listeners = new ArrayList<>();
     private final List<String> bindFailures = new ArrayList<>();
+    private final List<Connection> cgiWaiters = new ArrayList<>();
     private final HttpDate httpDate = new HttpDate();
 
     private final AtomicInteger open = new AtomicInteger();
@@ -137,9 +138,11 @@ public final class Server {
             long lastSweep = System.nanoTime();
             while (!stopRequested && selector.isOpen()) {
                 try {
-                    selector.select(SWEEP_INTERVAL_MS);
+                    long selectTimeout = cgiWaiters.isEmpty() ? SWEEP_INTERVAL_MS : 20;
+                    selector.select(selectTimeout);
                     dispatchReadyKeys();
                     long now = System.nanoTime();
+                    pollCgiWaiters(now);
                     resumeAcceptingIfDue(now);
                     if (now - lastSweep >= SWEEP_INTERVAL_MS * 1_000_000L) {
                         sweep(now);
@@ -151,6 +154,26 @@ public final class Server {
             }
         } finally {
             closeAll();
+        }
+    }
+
+    void registerCgiWaiter(Connection c) {
+        if (!cgiWaiters.contains(c)) {
+            cgiWaiters.add(c);
+        }
+    }
+
+    void unregisterCgiWaiter(Connection c) {
+        cgiWaiters.remove(c);
+    }
+
+    private void pollCgiWaiters(long now) {
+        if (cgiWaiters.isEmpty()) {
+            return;
+        }
+        List<Connection> copy = new ArrayList<>(cgiWaiters);
+        for (Connection c : copy) {
+            c.pollCgi(now);
         }
     }
 

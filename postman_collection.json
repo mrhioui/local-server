@@ -1,0 +1,1051 @@
+{
+  "info": {
+    "name": "Local Java HTTP/1.1 Server — Full Test Suite",
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "description": "Comprehensive Postman collection covering all routes, methods, CGI, file uploads, sessions, redirects, virtual hosts, error pages, and edge cases for the local Java HTTP/1.1 server.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url",   "value": "http://localhost:8080", "type": "string" },
+    { "key": "port_8081",  "value": "http://localhost:8081", "type": "string" },
+    { "key": "test_com",   "value": "http://localhost:8080", "type": "string" }
+  ],
+  "item": [
+
+    {
+      "name": "01 · Core HTTP/1.1 — Static Files",
+      "item": [
+        {
+          "name": "GET / → 200 (index.html)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('HTTP/1.1', () => pm.response.to.have.header('Content-Length'));",
+            "pm.test('Content-Type text/html', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('text/html'));",
+            "pm.test('Body contains server title', () => pm.expect(pm.response.text()).to.include('HTTP'));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "GET / on port 8081 → 200",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200 on port 8081', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8081" }],
+            "url": { "raw": "{{port_8081}}/", "host": ["{{port_8081}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "GET / — Content-Length header present",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Content-Length present', () => pm.response.to.have.header('Content-Length'));",
+            "pm.test('Connection header present', () => pm.response.to.have.header('Connection'));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "GET /nonexistent → 404",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 404', () => pm.response.to.have.status(404));",
+            "pm.test('Body non-empty', () => pm.expect(pm.response.text().length).to.be.above(0));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/this-does-not-exist", "host": ["{{base_url}}"], "path": ["this-does-not-exist"] }
+          }
+        },
+        {
+          "name": "DELETE / → 405 (GET-only route)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 405', () => pm.response.to.have.status(405));",
+            "pm.test('Body non-empty', () => pm.expect(pm.response.text().length).to.be.above(0));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "POST / → 405 (GET-only route)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 405', () => pm.response.to.have.status(405));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "text/plain" }
+            ],
+            "body": { "mode": "raw", "raw": "body" },
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "02 · File Uploads — /upload and /uploads",
+      "item": [
+        {
+          "name": "POST /upload — multipart form-data → 201",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201 Created', () => pm.response.to.have.status(201));",
+            "pm.test('Set-Cookie issued', () => pm.response.to.have.header('Set-Cookie'));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "file", "type": "text", "value": "Hello from Postman multipart upload test!" }]
+            },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /upload — raw text body → 201",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "text/plain" }
+            ],
+            "body": { "mode": "raw", "raw": "This is a plain text upload from Postman." },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /upload — JSON body → 201",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"upload\":\"test\",\"source\":\"postman\"}" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /upload — binary (PNG header bytes) → 201",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "image/png" }
+            ],
+            "body": { "mode": "raw", "raw": "PNGFAKEDATA_binary_upload_test_postman" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /uploads — multipart → 201",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "file", "type": "text", "value": "upload via /uploads route" }]
+            },
+            "url": { "raw": "{{base_url}}/uploads", "host": ["{{base_url}}"], "path": ["uploads"] }
+          }
+        },
+        {
+          "name": "GET /uploads — autoindex off → 403 or 404",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('403 or 404 (no directory listing)', () => {",
+            "  pm.expect([403, 404]).to.include(pm.response.code);",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/uploads", "host": ["{{base_url}}"], "path": ["uploads"] }
+          }
+        },
+        {
+          "name": "POST /upload — no Content-Length, not chunked → 411",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 411 Length Required', () => pm.response.to.have.status(411));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Length", "value": "", "disabled": true }
+            ],
+            "body": { "mode": "raw", "raw": "" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "DELETE /upload/:file — saved file (update filename before running)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200 Deleted', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/uploads/REPLACE_WITH_ACTUAL_UUID.txt", "host": ["{{base_url}}"], "path": ["uploads", "REPLACE_WITH_ACTUAL_UUID.txt"] }
+          }
+        },
+        {
+          "name": "DELETE /uploads/nonexistent → 404",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 404', () => pm.response.to.have.status(404));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/uploads/ghost_file_xyz.txt", "host": ["{{base_url}}"], "path": ["uploads", "ghost_file_xyz.txt"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "03 · CGI Scripts — /api",
+      "item": [
+        {
+          "name": "GET /api/index.py → 200 JSON",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Body is valid JSON', () => {",
+            "  const j = pm.response.json();",
+            "  pm.expect(j).to.have.property('status', 'ok');",
+            "  pm.expect(j).to.have.property('method', 'GET');",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/api/index.py", "host": ["{{base_url}}"], "path": ["api", "index.py"] }
+          }
+        },
+        {
+          "name": "GET /api/index.py?foo=bar&baz=1 — query string reflected",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Query params in response', () => {",
+            "  const j = pm.response.json();",
+            "  pm.expect(j.query).to.have.property('foo', 'bar');",
+            "  pm.expect(j.query).to.have.property('baz', '1');",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": {
+              "raw": "{{base_url}}/api/index.py?foo=bar&baz=1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "index.py"],
+              "query": [
+                { "key": "foo", "value": "bar" },
+                { "key": "baz", "value": "1" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /api/index.py — form-urlencoded body → CGI 200 (not upload 201)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200 (CGI, not 201 upload)', () => pm.response.to.have.status(200));",
+            "pm.test('Method is POST in response', () => {",
+            "  const j = pm.response.json();",
+            "  pm.expect(j.method).to.eql('POST');",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": { "mode": "urlencoded", "urlencoded": [
+              { "key": "name", "value": "postman" },
+              { "key": "value", "value": "42" }
+            ]},
+            "url": { "raw": "{{base_url}}/api/index.py", "host": ["{{base_url}}"], "path": ["api", "index.py"] }
+          }
+        },
+        {
+          "name": "POST /api/index.py — raw JSON body → CGI echoes body",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Body data present', () => {",
+            "  const j = pm.response.json();",
+            "  pm.expect(j.body).to.exist;",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"hello\":\"world\"}" },
+            "url": { "raw": "{{base_url}}/api/index.py", "host": ["{{base_url}}"], "path": ["api", "index.py"] }
+          }
+        },
+        {
+          "name": "POST /api/login.py — POST body echoed back",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Response contains POST body echo', () => {",
+            "  pm.expect(pm.response.text()).to.include('CGI Execution Successful');",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "text/plain" }
+            ],
+            "body": { "mode": "raw", "raw": "username=admin&password=secret" },
+            "url": { "raw": "{{base_url}}/api/login.py", "host": ["{{base_url}}"], "path": ["api", "login.py"] }
+          }
+        },
+        {
+          "name": "GET /api/index.py — PATH_INFO via sub-path",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/api/index.py", "host": ["{{base_url}}"], "path": ["api", "index.py"] }
+          }
+        },
+        {
+          "name": "GET /api/nonexistent.py → 404",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 404', () => pm.response.to.have.status(404));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/api/nonexistent.py", "host": ["{{base_url}}"], "path": ["api", "nonexistent.py"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "04 · Sessions & Cookies",
+      "item": [
+        {
+          "name": "First GET / — Set-Cookie issued (new session)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Set-Cookie header present', () => pm.response.to.have.header('Set-Cookie'));",
+            "pm.test('Cookie contains session_id', () => {",
+            "  pm.expect(pm.response.headers.get('Set-Cookie')).to.include('session_id');",
+            "});",
+            "pm.test('Cookie has HttpOnly flag', () => {",
+            "  pm.expect(pm.response.headers.get('Set-Cookie')).to.include('HttpOnly');",
+            "});",
+            "const cookie = pm.response.headers.get('Set-Cookie');",
+            "const match = cookie && cookie.match(/session_id=([^;]+)/);",
+            "if (match) pm.collectionVariables.set('session_id', match[1]);"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "Second GET / with valid session — no new Set-Cookie",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('No new Set-Cookie (session reused)', () => {",
+            "  pm.expect(pm.response.headers.get('Set-Cookie')).to.be.null;",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Cookie", "value": "session_id={{session_id}}" }
+            ],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "GET / with fake session ID — new Set-Cookie issued",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Set-Cookie present for unknown session', () => {",
+            "  pm.response.to.have.header('Set-Cookie');",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Cookie", "value": "session_id=not-a-real-session-id-00000000" }
+            ],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "05 · Redirects",
+      "item": [
+        {
+          "name": "GET /old-site → 301 Moved Permanently",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 301', () => pm.response.to.have.status(301));",
+            "pm.test('Location header present', () => pm.response.to.have.header('Location'));",
+            "pm.test('Location points to localhost root', () => {",
+            "  pm.expect(pm.response.headers.get('Location')).to.include('localhost');",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/old-site", "host": ["{{base_url}}"], "path": ["old-site"] }
+          }
+        },
+        {
+          "name": "GET /old-site — follow redirect → final 200",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Final status 200 after redirect', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/old-site", "host": ["{{base_url}}"], "path": ["old-site"] }
+          },
+          "protocolProfileBehavior": { "followRedirects": true }
+        },
+        {
+          "name": "GET /old-site — do NOT follow redirect, check Location value",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 301', () => pm.response.to.have.status(301));",
+            "pm.test('Location = http://localhost:8080/', () => {",
+            "  pm.expect(pm.response.headers.get('Location')).to.eql('http://localhost:8080/');",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/old-site", "host": ["{{base_url}}"], "path": ["old-site"] }
+          },
+          "protocolProfileBehavior": { "followRedirects": false }
+        }
+      ]
+    },
+
+    {
+      "name": "06 · Virtual Hosts",
+      "item": [
+        {
+          "name": "GET http://test.com/ → 200 (serves home.html)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Body non-empty', () => pm.expect(pm.response.text().length).to.be.above(0));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "test.com:8080" }],
+            "url": { "raw": "{{test_com}}/", "host": ["{{test_com}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "GET test.com /no-such-page → custom test_404.html",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 404', () => pm.response.to.have.status(404));",
+            "pm.test('Body non-empty', () => pm.expect(pm.response.text().length).to.be.above(0));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "test.com:8080" }],
+            "url": { "raw": "{{test_com}}/no-such-page", "host": ["{{test_com}}"], "path": ["no-such-page"] }
+          }
+        },
+        {
+          "name": "POST test.com /submit — within 500-byte limit → 201",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201 (body within limit)', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "test.com:8080" },
+              { "key": "Content-Type", "value": "text/plain" }
+            ],
+            "body": { "mode": "raw", "raw": "small body" },
+            "url": { "raw": "{{test_com}}/submit", "host": ["{{test_com}}"], "path": ["submit"] }
+          }
+        },
+        {
+          "name": "POST test.com /submit — over 500-byte limit → 413",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 413 Payload Too Large', () => pm.response.to.have.status(413));",
+            "pm.test('Body non-empty', () => pm.expect(pm.response.text().length).to.be.above(0));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "test.com:8080" },
+              { "key": "Content-Type", "value": "text/plain" }
+            ],
+            "body": { "mode": "raw", "raw": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" },
+            "url": { "raw": "{{test_com}}/submit", "host": ["{{test_com}}"], "path": ["submit"] }
+          }
+        },
+        {
+          "name": "GET test.com / — DELETE not allowed → 405",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 405', () => pm.response.to.have.status(405));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Host", "value": "test.com:8080" }],
+            "url": { "raw": "{{test_com}}/", "host": ["{{test_com}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "Unknown Host header → falls back to default server (200)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200 (default server fallback)', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "unknown.host:8080" }],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "07 · Error Pages",
+      "item": [
+        {
+          "name": "400 — custom error page served",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 400', () => pm.response.to.have.status(400));",
+            "pm.test('Body non-empty (custom page)', () => pm.expect(pm.response.text().length).to.be.above(0));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/upload?Content-Length=notanumber", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "403 — path traversal blocked",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 400/403/404 (traversal blocked)', () => {",
+            "  pm.expect([400, 403, 404]).to.include(pm.response.code);",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/uploads/../../../etc/passwd", "host": ["{{base_url}}"], "path": ["uploads", "..", "..", "..", "etc", "passwd"] }
+          }
+        },
+        {
+          "name": "404 — non-existent file, custom error page",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 404', () => pm.response.to.have.status(404));",
+            "pm.test('Body non-empty', () => pm.expect(pm.response.text().length).to.be.above(0));",
+            "pm.test('Content-Type text/html', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('text/html'));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/does-not-exist-xyz", "host": ["{{base_url}}"], "path": ["does-not-exist-xyz"] }
+          }
+        },
+        {
+          "name": "405 — method not allowed, custom error page",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 405', () => pm.response.to.have.status(405));",
+            "pm.test('Body non-empty', () => pm.expect(pm.response.text().length).to.be.above(0));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "411 — POST without Content-Length, custom error page",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 411 Length Required', () => pm.response.to.have.status(411));",
+            "pm.test('Body non-empty', () => pm.expect(pm.response.text().length).to.be.above(0));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Length", "value": "", "disabled": true }
+            ],
+            "body": { "mode": "raw", "raw": "" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "413 — body exceeds clientMaxBodySize on test.com",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 413 Payload Too Large', () => pm.response.to.have.status(413));",
+            "pm.test('Body non-empty', () => pm.expect(pm.response.text().length).to.be.above(0));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "test.com:8080" },
+              { "key": "Content-Type", "value": "text/plain" }
+            ],
+            "body": { "mode": "raw", "raw": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" },
+            "url": { "raw": "{{test_com}}/submit", "host": ["{{test_com}}"], "path": ["submit"] }
+          }
+        },
+        {
+          "name": "413 — body within 10 MB limit on localhost → 201",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201 (within localhost limit)', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "text/plain" }
+            ],
+            "body": { "mode": "raw", "raw": "This 100-byte-ish body is well within the 10 MB localhost limit — OK!" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "08 · Edge Cases & Malformed Requests",
+      "item": [
+        {
+          "name": "OPTIONS / → 405 (unsupported method)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 405', () => pm.response.to.have.status(405));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "OPTIONS",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "PUT / → 405 (unsupported method on route)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 405', () => pm.response.to.have.status(405));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "text/plain" }
+            ],
+            "body": { "mode": "raw", "raw": "put body" },
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "GET /uploads/../index.html — path traversal via URL → blocked",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Traversal blocked: 400/403/404', () => {",
+            "  pm.expect([400, 403, 404]).to.include(pm.response.code);",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/uploads/../index.html", "host": ["{{base_url}}"], "path": ["uploads", "..", "index.html"] }
+          }
+        },
+        {
+          "name": "POST /upload — Content-Length: -1 → 400",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 400 (invalid Content-Length)', () => pm.response.to.have.status(400));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "text/plain" },
+              { "key": "Content-Length", "value": "-1" }
+            ],
+            "body": { "mode": "raw", "raw": "body" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "GET /api — no script file, just route root → 403 or 404",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('403 or 404 on bare CGI directory', () => {",
+            "  pm.expect([403, 404]).to.include(pm.response.code);",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/api", "host": ["{{base_url}}"], "path": ["api"] }
+          }
+        },
+        {
+          "name": "DELETE /upload (route, no file) → 404",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 404', () => pm.response.to.have.status(404));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /upload — empty body (no Content-Length) → 411",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 411', () => pm.response.to.have.status(411));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Length", "value": "", "disabled": true }
+            ],
+            "body": { "mode": "raw", "raw": "" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "09 · Directory Listing (autoindex)",
+      "item": [
+        {
+          "name": "GET / — autoindex on, index.html exists → 200 (serves file)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('HTML content served', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('text/html'));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "GET /uploads — autoindex disabled → 403 or 404",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('No directory listing when autoindex off', () => {",
+            "  pm.expect([403, 404]).to.include(pm.response.code);",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/uploads", "host": ["{{base_url}}"], "path": ["uploads"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "10 · Multiple Ports",
+      "item": [
+        {
+          "name": "GET / on port 8080 → 200",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Port 8080 responds 200', () => pm.response.to.have.status(200));",
+            "pm.collectionVariables.set('body_8080', pm.response.text());"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "GET / on port 8081 → 200",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Port 8081 responds 200', () => pm.response.to.have.status(200));",
+            "pm.test('Same content as port 8080', () => {",
+            "  pm.expect(pm.response.text()).to.eql(pm.collectionVariables.get('body_8080'));",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8081" }],
+            "url": { "raw": "{{port_8081}}/", "host": ["{{port_8081}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "GET /api/index.py on port 8081 → CGI works on both ports",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200 on port 8081 CGI', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8081" }],
+            "url": { "raw": "{{port_8081}}/api/index.py", "host": ["{{port_8081}}"], "path": ["api", "index.py"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "11 · Keep-Alive & Connection Headers",
+      "item": [
+        {
+          "name": "GET / — Connection header in response",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Connection header present', () => pm.response.to.have.header('Connection'));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Connection", "value": "keep-alive" }
+            ],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        },
+        {
+          "name": "GET / with Connection: close — server acknowledges",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Connection header present', () => pm.response.to.have.header('Connection'));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Connection", "value": "close" }
+            ],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": ["/"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "12 · Media & Multimedia Uploads",
+      "item": [
+        {
+          "name": "POST /upload — image/png content type → .png file saved (201)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "image/png" }
+            ],
+            "body": { "mode": "raw", "raw": "\\x89PNG\\r\\n\\x1a\\nFAKE_PNG_DATA_FOR_TESTING" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /upload — image/jpeg → .jpg file saved (201)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "image/jpeg" }
+            ],
+            "body": { "mode": "raw", "raw": "FAKE_JPEG_DATA_FOR_POSTMAN_TEST" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /upload — video/mp4 → .mp4 file saved (201)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "video/mp4" }
+            ],
+            "body": { "mode": "raw", "raw": "FAKE_MP4_BINARY_DATA" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /upload — audio/mpeg → .mp3 file saved (201)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "audio/mpeg" }
+            ],
+            "body": { "mode": "raw", "raw": "FAKE_MP3_BINARY_DATA" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /upload — application/pdf → .pdf file saved (201)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "application/pdf" }
+            ],
+            "body": { "mode": "raw", "raw": "%PDF-1.4 FAKE PDF DATA FOR TESTING" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /upload — application/zip → .zip file saved (201)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "application/zip" }
+            ],
+            "body": { "mode": "raw", "raw": "PK FAKE ZIP DATA" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /upload — unknown MIME type → .bin fallback (201)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201 (.bin fallback)', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "application/x-custom-unknown" }
+            ],
+            "body": { "mode": "raw", "raw": "some unknown binary blob" },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        },
+        {
+          "name": "POST /upload — multipart with filename → extension preserved (201)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "file", "type": "text", "value": "postman file content", "description": "named file upload" }]
+            },
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "13 · CGI Environment & Advanced",
+      "item": [
+        {
+          "name": "GET /api/index.py — GATEWAY_INTERFACE env set (response ok)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('script field in response', () => {",
+            "  const j = pm.response.json();",
+            "  pm.expect(j).to.have.property('script');",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": { "raw": "{{base_url}}/api/index.py", "host": ["{{base_url}}"], "path": ["api", "index.py"] }
+          }
+        },
+        {
+          "name": "POST /api/index.py — large body (within limit)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('body.raw present in CGI response', () => {",
+            "  const j = pm.response.json();",
+            "  pm.expect(j.body).to.have.property('raw');",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Host", "value": "localhost:8080" },
+              { "key": "Content-Type", "value": "text/plain" }
+            ],
+            "body": { "mode": "raw", "raw": "This is a longer body sent to the CGI script to test that it reads the full stdin content without truncation or hanging. Padding: 0000000000000000000000000000000000000000000000000000000000000000000000000000." },
+            "url": { "raw": "{{base_url}}/api/index.py", "host": ["{{base_url}}"], "path": ["api", "index.py"] }
+          }
+        },
+        {
+          "name": "GET /api/index.py — multiple query params",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('All query params reflected', () => {",
+            "  const j = pm.response.json();",
+            "  pm.expect(j.query).to.have.property('a', '1');",
+            "  pm.expect(j.query).to.have.property('b', '2');",
+            "  pm.expect(j.query).to.have.property('c', 'hello world');",
+            "});"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "localhost:8080" }],
+            "url": {
+              "raw": "{{base_url}}/api/index.py?a=1&b=2&c=hello%20world",
+              "host": ["{{base_url}}"],
+              "path": ["api", "index.py"],
+              "query": [
+                { "key": "a", "value": "1" },
+                { "key": "b", "value": "2" },
+                { "key": "c", "value": "hello world" }
+              ]
+            }
+          }
+        }
+      ]
+    }
+
+  ]
+}

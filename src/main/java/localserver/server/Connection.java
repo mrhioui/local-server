@@ -59,7 +59,7 @@ import java.nio.file.Path;
  */
 final class Connection {
 
-    private enum State { READING, WRITING, LINGERING }
+    private enum State { READING, WRITING, CGI_WAITING, LINGERING }
 
     /** What to do once the queued bytes are fully written. */
     private enum After { NEXT_REQUEST, RESUME_PARSING, CLOSE, LINGER }
@@ -82,6 +82,11 @@ final class Connection {
     private After after = After.NEXT_REQUEST;
     private ServerConfig selected;                               // virtual host of the current request
 
+    private CgiJob cgiJob;
+    private Request cgiRequest;
+    private boolean cgiKeepAlive;
+    private After cgiAfter;
+
     private long lastActivity;   // last time bytes actually moved
     private long requestStart;   // first byte of the current request
     private long lingerStart;
@@ -101,6 +106,9 @@ final class Connection {
     void onReadable() throws IOException {
         if (state == State.LINGERING) {
             drain();
+            return;
+        }
+        if (state == State.CGI_WAITING) {
             return;
         }
         int n = channel.read(in);
@@ -229,8 +237,13 @@ final class Connection {
         // 3. CGI
         String scriptName = rel.isEmpty() && route.index() != null ? route.index() : rel;
         if (route.interpreterFor(scriptName) != null) {
-            Response res = new CgiHandler(server.tempDir(), 10_000_000_000L).handle(request, route);
-            respond(wrapResponse(res, request, keepAlive), next);
+            CgiHandler cgiHandler = new CgiHandler(server.tempDir(), 10_000_000_000L, selected);
+            CgiHandler.PreparedCgi prep = cgiHandler.prepare(request, route);
+            if (prep.errorResponse() != null) {
+                respond(wrapResponse(prep.errorResponse(), request, keepAlive), next);
+                return;
+            }
+            startCgi(prep.job(), request, keepAlive, next);
             return;
         }
 
@@ -414,6 +427,38 @@ final class Connection {
         return all;
     }
 
+    // ---- CGI execution ---------------------------------------------------------------------
+
+    private void startCgi(CgiJob job, Request req, boolean keepAlive, After next) {
+        this.cgiJob = job;
+        this.cgiRequest = req;
+        this.cgiKeepAlive = keepAlive;
+        this.cgiAfter = next;
+        this.state = State.CGI_WAITING;
+        this.key.interestOps(0);
+        server.registerCgiWaiter(this);
+    }
+
+    void pollCgi(long now) {
+        if (state != State.CGI_WAITING || cgiJob == null) {
+            return;
+        }
+        if (cgiJob.isTimedOut(now)) {
+            cgiJob.destroy();
+            cgiJob = null;
+            server.unregisterCgiWaiter(this);
+            Response err = ErrorPages.render(504, selected);
+            respond(wrapResponse(err, cgiRequest, cgiKeepAlive), cgiAfter);
+            return;
+        }
+        if (cgiJob.isDone()) {
+            Response res = cgiJob.finish();
+            cgiJob = null;
+            server.unregisterCgiWaiter(this);
+            respond(wrapResponse(res, cgiRequest, cgiKeepAlive), cgiAfter);
+        }
+    }
+
     // ---- timeouts and cleanup --------------------------------------------------------------
 
     /**
@@ -423,6 +468,9 @@ final class Connection {
     String timeoutReason(long now, Settings s) {
         if (state == State.LINGERING) {
             return now - lingerStart > LINGER_NANOS ? "linger over" : null;
+        }
+        if (state == State.CGI_WAITING) {
+            return null;
         }
         long quiet = now - lastActivity;
         boolean inRequest = state == State.WRITING || parser.started();
@@ -441,6 +489,11 @@ final class Connection {
     /** Frees whatever the connection holds besides the channel: the body temp file, later a CGI process. */
     void releaseResources() {
         out = null;
+        if (cgiJob != null) {
+            cgiJob.destroy();
+            cgiJob = null;
+            server.unregisterCgiWaiter(this);
+        }
         parser.close();
     }
 

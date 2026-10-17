@@ -2,3 +2,19 @@ target/
 out/
 *.class
 .vscode
+
+# Audit and test scripts (prevent committing for audits)
+scripts/*.py
+scripts/test_*.sh
+scripts/run_*.sh
+scripts/demo_*.py
+
+# Postman & Obsidian vaults
+postman/
+obsidian/
+.obsidian/
+
+# Upload test files
+www/site-a/upload_*
+www/uploads/*
+!www/uploads/.gitkeep

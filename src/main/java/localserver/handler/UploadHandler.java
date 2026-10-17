@@ -77,6 +77,9 @@ public class UploadHandler implements Handler {
             if (name == null) {
                 return ErrorPages.render(400);
             }
+            if (route.interpreterFor(name) != null) {
+                return ErrorPages.render(403);
+            }
 
             String destRel = rel.isEmpty() ? name : rel + "/" + name;
             Path dest = PathResolver.resolve(route.root(), destRel);
@@ -107,9 +110,19 @@ public class UploadHandler implements Handler {
         if (rel.isEmpty()) {
             return ErrorPages.render(400); // no target filename
         }
+        if (body == null || body.length == 0) {
+            return ErrorPages.render(400);
+        }
 
         Path dest = PathResolver.resolve(route.root(), rel);
         if (dest == null) {
+            return ErrorPages.render(403);
+        }
+        String fileName = dest.getFileName().toString();
+        if (sanitizeFilename(fileName) == null) {
+            return ErrorPages.render(403);
+        }
+        if (route.interpreterFor(fileName) != null) {
             return ErrorPages.render(403);
         }
         Path parent = dest.getParent();

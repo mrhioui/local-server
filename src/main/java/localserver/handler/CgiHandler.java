@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import localserver.config.Route;
+import localserver.config.ServerConfig;
 import localserver.http.Request;
 import localserver.http.Response;
 import localserver.server.CgiJob;
@@ -13,22 +14,36 @@ import localserver.server.CgiJob;
  */
 public class CgiHandler implements Handler {
 
+    public record PreparedCgi(CgiJob job, Response errorResponse) {
+        public static PreparedCgi of(CgiJob job) {
+            return new PreparedCgi(job, null);
+        }
+        public static PreparedCgi error(Response errorResponse) {
+            return new PreparedCgi(null, errorResponse);
+        }
+    }
+
     private final Path tempDir;
     private final long timeoutNanos;
+    private final ServerConfig config;
 
     public CgiHandler() {
-        this(Path.of(System.getProperty("java.io.tmpdir")), 5_000_000_000L); // 5 seconds default
+        this(Path.of(System.getProperty("java.io.tmpdir")), 5_000_000_000L, null);
     }
 
     public CgiHandler(Path tempDir, long timeoutNanos) {
-        this.tempDir = tempDir;
-        this.timeoutNanos = timeoutNanos;
+        this(tempDir, timeoutNanos, null);
     }
 
-    @Override
-    public Response handle(Request request, Route route) {
+    public CgiHandler(Path tempDir, long timeoutNanos, ServerConfig config) {
+        this.tempDir = tempDir;
+        this.timeoutNanos = timeoutNanos;
+        this.config = config;
+    }
+
+    public PreparedCgi prepare(Request request, Route route) {
         if (route == null || route.root() == null) {
-            return ErrorPages.render(404);
+            return PreparedCgi.error(ErrorPages.render(404, config));
         }
 
         String reqPath = request.path();
@@ -52,31 +67,42 @@ public class CgiHandler implements Handler {
         }
 
         if (rel.isEmpty()) {
-            return ErrorPages.render(404);
+            return PreparedCgi.error(ErrorPages.render(404, config));
         }
 
         Path scriptPath = PathResolver.resolve(route.root(), rel);
         if (scriptPath == null || !Files.exists(scriptPath) || Files.isDirectory(scriptPath)) {
-            return ErrorPages.render(404);
+            return PreparedCgi.error(ErrorPages.render(404, config));
         }
 
         String interpreter = route.interpreterFor(scriptPath.getFileName().toString());
         if (interpreter == null && !Files.isExecutable(scriptPath)) {
-            return ErrorPages.render(403);
+            return PreparedCgi.error(ErrorPages.render(403, config));
         }
 
         try {
-            CgiJob job = CgiJob.start(request, route, scriptPath, interpreter, tempDir, null, timeoutNanos);
-            while (!job.isDone()) {
-                if (job.isTimedOut(System.nanoTime())) {
-                    job.destroy();
-                    return ErrorPages.render(504);
-                }
-                Thread.onSpinWait();
-            }
-            return job.finish();
+            CgiJob job = CgiJob.start(request, route, scriptPath, interpreter, tempDir, config, timeoutNanos);
+            return PreparedCgi.of(job);
         } catch (IOException e) {
-            return ErrorPages.render(500);
+            return PreparedCgi.error(ErrorPages.render(500, config));
         }
     }
+
+    @Override
+    public Response handle(Request request, Route route) {
+        PreparedCgi prep = prepare(request, route);
+        if (prep.errorResponse() != null) {
+            return prep.errorResponse();
+        }
+        CgiJob job = prep.job();
+        while (!job.isDone()) {
+            if (job.isTimedOut(System.nanoTime())) {
+                job.destroy();
+                return ErrorPages.render(504, config);
+            }
+            Thread.onSpinWait();
+        }
+        return job.finish();
+    }
 }
+
