@@ -773,6 +773,25 @@ class ServerTest {
     }
 
     @Test
+    void customErrorPageIsServedForMissingStaticFile() throws Exception {
+        Path errDir = base.resolve("error_pages");
+        Files.createDirectories(errDir);
+        Files.writeString(errDir.resolve("404.html"), "<h1>Custom 404 from Config</h1>");
+
+        int port = freePort();
+        startJson("""
+                {"settings": {}, "servers": [
+                  {"ports": [%d], "server_names": ["custom.test"], "error_pages": {"404": "error_pages/404.html"}, "routes": [{"path": "/", "root": "www"}]}
+                ]}
+                """.formatted(port));
+        Client c = new Client(port);
+        c.send("GET /does-not-exist.txt HTTP/1.1\r\nHost: custom.test\r\n\r\n");
+        Response r = c.read();
+        assertEquals(404, r.status());
+        assertEquals("<h1>Custom 404 from Config</h1>", r.body());
+    }
+
+    @Test
     void anUnsupportedMethodGets405WithAllowAndTheConnectionSurvives() throws Exception {
         start("{}");
         Client c = new Client(port());

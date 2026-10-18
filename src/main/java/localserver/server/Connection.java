@@ -21,6 +21,7 @@ import localserver.handler.UploadHandler;
 import localserver.http.BodySink;
 import localserver.http.FileBodySink;
 import localserver.http.HeadDecision;
+import localserver.http.HttpException;
 import localserver.http.HttpParser;
 import localserver.http.MemoryBodySink;
 import localserver.http.ParseError;
@@ -195,33 +196,33 @@ final class Connection {
         if (!SUPPORTED_METHODS.contains(request.method())) {
             Response err = ErrorPages.render(405, selected);
             err.addHeader("Allow", "GET, POST, DELETE");
-            respond(wrapResponse(err, request, keepAlive), next);
+            sendResponse(err, request, keepAlive, next);
             return;
         }
 
         if (request.path().equals("/metrics") || request.path().equals("/admin/metrics")) {
             Response res = new MetricsHandler(server).handle(request, null);
-            respond(wrapResponse(res, request, keepAlive), next);
+            sendResponse(res, request, keepAlive, next);
             return;
         }
 
         Route route = selected != null ? selected.matchRoute(request.path()) : null;
         if (route == null) {
-            respond(renderError(404, keepAlive), next);
+            sendResponse(ErrorPages.render(404, selected), request, keepAlive, next);
             return;
         }
 
         if (!route.allows(request.method())) {
             Response err = ErrorPages.render(405, selected);
             err.addHeader("Allow", route.allowHeader());
-            respond(wrapResponse(err, request, keepAlive), next);
+            sendResponse(err, request, keepAlive, next);
             return;
         }
 
         // 1. Redirect
         if (route.redirect() != null) {
             Response res = new RedirectHandler().handle(request, route);
-            respond(wrapResponse(res, request, keepAlive), next);
+            sendResponse(res, request, keepAlive, next);
             return;
         }
 
@@ -231,41 +232,57 @@ final class Connection {
         // 3. CGI
         String scriptName = rel.isEmpty() && route.index() != null ? route.index() : rel;
         if (route.interpreterFor(scriptName) != null) {
-            CgiHandler cgiHandler = new CgiHandler(server.tempDir(), 10_000_000_000L, selected);
-            CgiHandler.PreparedCgi prep = cgiHandler.prepare(request, route);
-            if (prep.errorResponse() != null) {
-                respond(wrapResponse(prep.errorResponse(), request, keepAlive), next);
-                return;
+            try {
+                CgiHandler cgiHandler = new CgiHandler(server.tempDir(), 10_000_000_000L);
+                CgiJob job = cgiHandler.prepare(request, route);
+                startCgi(job, request, keepAlive, next);
+            } catch (HttpException e) {
+                Response err = ErrorPages.render(e.status(), selected);
+                sendResponse(err, request, false, After.CLOSE);
             }
-            startCgi(prep.job(), request, keepAlive, next);
             return;
         }
 
         // 4. Upload (POST)
         if (request.method().equals("POST")) {
             Response res = new UploadHandler().handle(request, route);
-            respond(wrapResponse(res, request, keepAlive), next);
+            sendResponse(res, request, keepAlive, next);
             return;
         }
 
         // 5. Delete (DELETE)
         if (request.method().equals("DELETE")) {
             Response res = new DeleteHandler().handle(request, route);
-            respond(wrapResponse(res, request, keepAlive), next);
+            sendResponse(res, request, keepAlive, next);
             return;
         }
 
         // 6. Static files (GET)
         if (request.method().equals("GET")) {
             Response res = new StaticHandler().handle(request, route);
-            respond(wrapResponse(res, request, keepAlive), next);
+            sendResponse(res, request, keepAlive, next);
             return;
         }
 
-        respond(renderError(405, keepAlive), next);
+        sendResponse(ErrorPages.render(405, selected), request, keepAlive, next);
+    }
+
+    private void sendResponse(Response res, Request request, boolean keepAlive, After defaultNext) {
+        After then = defaultNext;
+        if (res.getStatusCode() == 400 || res.getStatusCode() == 413) {
+            keepAlive = false;
+            then = After.LINGER;
+        } else if (!keepAlive) {
+            then = After.CLOSE;
+        }
+        respond(wrapResponse(res, request, keepAlive), then);
     }
 
     private byte[] wrapResponse(Response res, Request request, boolean keepAlive) {
+        if (res.getStatusCode() >= 400 && selected != null && selected.errorPages() != null && selected.errorPages().containsKey(res.getStatusCode())) {
+            Response custom = ErrorPages.render(res.getStatusCode(), selected);
+            res.setBody(custom.getBody(), custom.getHeaders().getOrDefault("Content-Type", "text/html; charset=utf-8"));
+        }
         res.addHeader("Connection", keepAlive ? "keep-alive" : "close");
         res.addHeader("Date", server.date());
         ensureSession(res, request);
@@ -274,9 +291,7 @@ final class Connection {
 
     private byte[] renderError(int code, boolean keepAlive) {
         Response err = ErrorPages.render(code, selected);
-        err.addHeader("Connection", keepAlive ? "keep-alive" : "close");
-        err.addHeader("Date", server.date());
-        return err.getBytes();
+        return wrapResponse(err, null, keepAlive);
     }
 
     private void ensureSession(Response res, Request request) {
@@ -373,14 +388,20 @@ final class Connection {
             cgiJob = null;
             server.unregisterCgiWaiter(this);
             Response err = ErrorPages.render(504, selected);
-            respond(wrapResponse(err, cgiRequest, cgiKeepAlive), cgiAfter);
+            sendResponse(err, cgiRequest, cgiKeepAlive, cgiAfter);
             return;
         }
         if (cgiJob.isDone()) {
-            Response res = cgiJob.finish();
-            cgiJob = null;
             server.unregisterCgiWaiter(this);
-            respond(wrapResponse(res, cgiRequest, cgiKeepAlive), cgiAfter);
+            try {
+                Response res = cgiJob.finish();
+                cgiJob = null;
+                sendResponse(res, cgiRequest, cgiKeepAlive, cgiAfter);
+            } catch (HttpException e) {
+                cgiJob = null;
+                Response err = ErrorPages.render(e.status(), selected);
+                sendResponse(err, cgiRequest, false, After.CLOSE);
+            }
         }
     }
 

@@ -19,7 +19,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 import localserver.config.ListenerSpec;
 import localserver.config.LoadedConfig;
+import localserver.config.ServerConfig;
 import localserver.config.Settings;
+import localserver.handler.ErrorPages;
 import localserver.http.HttpDate;
 import localserver.session.Session;
 import localserver.util.Log;
@@ -84,6 +86,9 @@ public final class Server {
         }
         Server server = new Server(config.settings(), selector, tempDir);
         try {
+            for (ServerConfig sc : config.servers()) {
+                ErrorPages.preload(sc);
+            }
             for (ListenerSpec spec : config.listeners()) {
                 server.bind(spec);
             }

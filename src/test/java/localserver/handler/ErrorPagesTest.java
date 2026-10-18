@@ -105,4 +105,20 @@ class ErrorPagesTest {
         assertEquals(404, resp.getStatusCode());
         assertTrue(bodyOf(resp).contains("404 Not Found"));
     }
+
+    @Test
+    void customErrorPagePreloadedAndServedFromCache(@TempDir Path tempDir) throws IOException {
+        Path custom500 = tempDir.resolve("500.html");
+        Files.writeString(custom500, "<h1>Preloaded 500</h1>");
+
+        ServerConfig cfg = configWithErrorPages(Map.of(500, custom500));
+        ErrorPages.preload(cfg);
+
+        // Delete the file on disk to prove it is served from in-memory cache
+        Files.delete(custom500);
+
+        Response resp = ErrorPages.render(500, cfg);
+        assertEquals(500, resp.getStatusCode());
+        assertEquals("<h1>Preloaded 500</h1>", bodyOf(resp));
+    }
 }

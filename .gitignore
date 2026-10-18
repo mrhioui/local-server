@@ -16,5 +16,6 @@ obsidian/
 
 # Upload test files
 www/site-a/upload_*
+www/site-a/limit_test.txt
 www/uploads/*
 !www/uploads/.gitkeep

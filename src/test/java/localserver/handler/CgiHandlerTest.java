@@ -131,18 +131,18 @@ public class CgiHandlerTest {
     }
 
     @Test
-    void parsesOutputWithoutStatusAs200() {
+    void parsesOutputWithoutStatusAs200() throws Exception {
         String output = "Content-Type: text/plain\r\n\r\nPlain text";
-        Response res = CgiJob.parseOutput(output.getBytes(StandardCharsets.UTF_8), null);
+        Response res = CgiJob.parseOutput(output.getBytes(StandardCharsets.UTF_8));
         assertEquals(200, res.getStatusCode());
         assertEquals("text/plain", res.getHeaders().get("Content-Type"));
         assertEquals("Plain text", new String(res.getBody(), StandardCharsets.UTF_8));
     }
 
     @Test
-    void parsesLocationHeaderAs302ByDefault() {
+    void parsesLocationHeaderAs302ByDefault() throws Exception {
         String output = "Location: /new/path\r\n\r\n";
-        Response res = CgiJob.parseOutput(output.getBytes(StandardCharsets.UTF_8), null);
+        Response res = CgiJob.parseOutput(output.getBytes(StandardCharsets.UTF_8));
         assertEquals(302, res.getStatusCode());
         assertEquals("/new/path", res.getHeaders().get("Location"));
     }

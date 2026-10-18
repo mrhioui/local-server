@@ -13,10 +13,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import localserver.config.Route;
-import localserver.config.ServerConfig;
-import localserver.handler.ErrorPages;
 import localserver.handler.PathResolver;
 import localserver.http.BodySink;
+import localserver.http.HttpException;
 import localserver.http.Request;
 import localserver.http.Response;
 
@@ -32,15 +31,13 @@ public class CgiJob {
     private final Path stdinFile;
     private final Path stdoutFile;
     private final long deadlineNanos;
-    private final ServerConfig config;
     private boolean finished;
 
-    public CgiJob(Process process, Path stdinFile, Path stdoutFile, long deadlineNanos, ServerConfig config) {
+    public CgiJob(Process process, Path stdinFile, Path stdoutFile, long deadlineNanos) {
         this.process = process;
         this.stdinFile = stdinFile;
         this.stdoutFile = stdoutFile;
         this.deadlineNanos = deadlineNanos;
-        this.config = config;
     }
 
     public boolean isDone() {
@@ -51,23 +48,23 @@ public class CgiJob {
         return nowNanos >= deadlineNanos;
     }
 
-    public Response finish() {
+    public Response finish() throws HttpException {
         if (finished) {
-            return ErrorPages.render(500, config);
+            throw new HttpException(500, "CGI job already finished");
         }
         finished = true;
         try {
             if (!Files.exists(stdoutFile)) {
-                return ErrorPages.render(502, config);
+                throw new HttpException(502, "CGI process produced no output");
             }
             long size = Files.size(stdoutFile);
             if (size > MAX_CGI_OUTPUT) {
-                return ErrorPages.render(502, config);
+                throw new HttpException(502, "CGI output exceeds limit");
             }
             byte[] output = Files.readAllBytes(stdoutFile);
-            return parseOutput(output, config);
+            return parseOutput(output);
         } catch (IOException e) {
-            return ErrorPages.render(500, config);
+            throw new HttpException(500, "Failed to read CGI output");
         } finally {
             destroy();
         }
@@ -96,7 +93,7 @@ public class CgiJob {
     }
 
     public static CgiJob start(Request request, Route route, Path scriptPath, String interpreter,
-                               Path tempDir, ServerConfig config, long timeoutNanos) throws IOException {
+                               Path tempDir, long timeoutNanos) throws IOException {
         List<String> command = new ArrayList<>();
         if (interpreter == null || interpreter.isEmpty()) {
             command.add(scriptPath.toAbsolutePath().toString());
@@ -172,12 +169,12 @@ public class CgiJob {
         pb.redirectError(ProcessBuilder.Redirect.DISCARD);
 
         Process process = pb.start();
-        return new CgiJob(process, stdinTemp, stdoutTemp, System.nanoTime() + timeoutNanos, config);
+        return new CgiJob(process, stdinTemp, stdoutTemp, System.nanoTime() + timeoutNanos);
     }
 
-    public static Response parseOutput(byte[] output, ServerConfig config) {
+    public static Response parseOutput(byte[] output) throws HttpException {
         if (output == null || output.length == 0) {
-            return ErrorPages.render(502, config);
+            throw new HttpException(502, "Empty CGI output");
         }
 
         int headerEnd = -1;
@@ -195,7 +192,7 @@ public class CgiJob {
         }
 
         if (headerEnd == -1) {
-            return ErrorPages.render(502, config);
+            throw new HttpException(502, "Missing CGI headers delimiter");
         }
 
         String headerSection = new String(output, 0, headerEnd, StandardCharsets.ISO_8859_1);
