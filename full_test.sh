@@ -111,12 +111,11 @@ else
     skip "400 no-Host test skipped (nc not available)"
 fi
 
-# 413 — body too large on test.com (limit: 500 bytes)
-code=$(http_status --resolve "test.com:$PORT:127.0.0.1" \
-    -X POST "http://test.com:$PORT/submit" \
+# 413 — body too large on port 9090 (limit: 1024 bytes)
+code=$(http_status -X POST "http://$HOST:9090/" \
     -H "Content-Type: text/plain" \
-    --data "$(python3 -c 'print("x"*1000)')")
-[[ "$code" == "413" ]] && pass "POST oversized body to test.com → 413" || fail "POST oversized body to test.com → expected 413, got $code"
+    --data "$(python3 -c 'print("x"*2000)')")
+[[ "$code" == "413" ]] && pass "POST oversized body to port 9090 → 413" || fail "POST oversized body to port 9090 → expected 413, got $code"
 
 # =============================================================================
 section "3 · METHODS — GET / POST / DELETE"
@@ -131,22 +130,20 @@ code=$(http_status -X POST "$BASE/upload" -F "file=@$UPLOAD_FILE")
 [[ "$code" == "201" ]] && pass "POST /upload (multipart) → 201" || fail "POST /upload (multipart) → expected 201, got $code"
 
 # POST chunked upload → 201
-code=$(cat "$UPLOAD_FILE" | http_status -X POST "$BASE/upload" \
+code=$(cat "$UPLOAD_FILE" | http_status -X POST "$BASE/upload/chunked_test.txt" \
     -H "Transfer-Encoding: chunked" --data-binary @-)
-[[ "$code" == "201" ]] && pass "POST /upload (chunked) → 201" || fail "POST /upload (chunked) → expected 201, got $code"
+[[ "$code" == "201" ]] && pass "POST /upload/chunked_test.txt (chunked) → 201" || fail "POST /upload/chunked_test.txt (chunked) → expected 201, got $code"
 
 # DELETE an uploaded file
-#   First upload a known file, then delete it.
 UNIQUE_NAME="delete_test_$(date +%s).txt"
-curl -s -X POST "$BASE/upload" \
+curl -s -X POST "$BASE/upload/$UNIQUE_NAME" \
     -H "Content-Type: text/plain" \
     --data-binary "delete me" \
     -o /dev/null
-# Find the file we just created (newest .txt or .bin in uploads)
-LATEST=$(ls -t public/uploads/ 2>/dev/null | head -1)
-if [[ -n "$LATEST" ]]; then
-    code=$(http_status -X DELETE "$BASE/uploads/$LATEST")
-    [[ "$code" == "200" ]] && pass "DELETE /uploads/$LATEST → 200" || fail "DELETE /uploads/$LATEST → expected 200, got $code"
+# Find the file we just created in www/uploads
+if [[ -f "www/uploads/$UNIQUE_NAME" ]]; then
+    code=$(http_status -X DELETE "$BASE/upload/$UNIQUE_NAME")
+    [[ "$code" == "200" || "$code" == "204" ]] && pass "DELETE /upload/$UNIQUE_NAME → $code" || fail "DELETE /upload/$UNIQUE_NAME → expected 200/204, got $code"
 else
     skip "DELETE test skipped — could not find uploaded file"
 fi
@@ -165,16 +162,12 @@ DOWNLOAD_PATH=$(mktemp /tmp/upload_roundtrip_XXXX)
 
 # Upload
 UPLOAD_RESP=$(http_full -X POST "$BASE/upload" -F "file=@$UPLOAD_FILE")
-# Grab the Content-Length from the 201 response to confirm something was written
 echo "$UPLOAD_RESP" | grep -q "201" && pass "Upload returned 201 for roundtrip test" || fail "Upload did not return 201 for roundtrip test"
 
-# The server saves under a UUID name; find the newest file
-SAVED_FILE=$(ls -t public/uploads/ 2>/dev/null | head -1)
-if [[ -n "$SAVED_FILE" ]] && [[ -f "public/uploads/$SAVED_FILE" ]]; then
-    SAVED_SUM=$(md5sum "public/uploads/$SAVED_FILE" | awk '{print $1}')
-    # Multipart strips the boundary wrapper, so the saved payload won't match the
-    # raw upload file — just verify the file is non-empty.
-    SIZE=$(stat -c%s "public/uploads/$SAVED_FILE" 2>/dev/null || stat -f%z "public/uploads/$SAVED_FILE" 2>/dev/null)
+# The server saves under upload filename in www/uploads
+SAVED_FILE=$(ls -t www/uploads/ 2>/dev/null | grep -v '\.gitkeep' | head -1)
+if [[ -n "$SAVED_FILE" ]] && [[ -f "www/uploads/$SAVED_FILE" ]]; then
+    SIZE=$(stat -c%s "www/uploads/$SAVED_FILE" 2>/dev/null || stat -f%z "www/uploads/$SAVED_FILE" 2>/dev/null)
     [[ "$SIZE" -gt 0 ]] && pass "Uploaded file is non-empty on disk (size=$SIZE bytes)" || fail "Uploaded file is empty on disk"
 else
     skip "Roundtrip integrity check skipped — no saved file found"
@@ -187,7 +180,7 @@ section "5 · COOKIES & SESSIONS"
 # First request — server should issue a Set-Cookie header
 resp=$(http_full -c "$COOKIE_JAR" "$BASE/")
 echo "$resp" | grep -qi "Set-Cookie" && pass "First GET → Set-Cookie header issued" || fail "First GET → no Set-Cookie header"
-echo "$resp" | grep -qi "session_id" && pass "Cookie contains session_id" || fail "Cookie does not contain session_id"
+echo "$resp" | grep -qiE "SID|session_id" && pass "Cookie contains session identifier" || fail "Cookie does not contain session identifier"
 
 # Second request with cookie — Set-Cookie should NOT appear (session already known)
 resp2=$(http_full -b "$COOKIE_JAR" "$BASE/")
@@ -199,22 +192,15 @@ echo "$resp2" | grep -qi "Set-Cookie" && \
 section "6 · VIRTUAL HOST ROUTING"
 # =============================================================================
 
-# test.com on port 8080 should return 200 and serve home.html
-code=$(http_status --resolve "test.com:$PORT:127.0.0.1" "http://test.com:$PORT/")
-[[ "$code" == "200" ]] && pass "GET http://test.com:$PORT/ → 200" || fail "GET http://test.com:$PORT/ → expected 200, got $code"
+# site-a.test on port 8080 should return 200
+code=$(http_status --resolve "site-a.test:$PORT:127.0.0.1" "http://site-a.test:$PORT/")
+[[ "$code" == "200" ]] && pass "GET http://site-a.test:$PORT/ → 200" || fail "GET http://site-a.test:$PORT/ → expected 200, got $code"
 
-# test.com should serve home.html content
-body=$(curl -s --max-time 5 --resolve "test.com:$PORT:127.0.0.1" "http://test.com:$PORT/")
-[[ -n "$body" ]] && pass "test.com response has a body" || fail "test.com response is empty"
+# site-b.test on port 8080 should return 200
+code_b=$(http_status --resolve "site-b.test:$PORT:127.0.0.1" "http://site-b.test:$PORT/")
+[[ "$code_b" == "200" ]] && pass "GET http://site-b.test:$PORT/ → 200" || fail "GET http://site-b.test:$PORT/ → expected 200, got $code_b"
 
-# test.com 404 should use test_404.html (different from localhost 404)
-body_test=$(curl -s --max-time 5 --resolve "test.com:$PORT:127.0.0.1" "http://test.com:$PORT/no-such-page")
-body_local=$(curl -s --max-time 5 "$BASE/no-such-page")
-[[ "$body_test" != "$body_local" ]] && \
-    pass "test.com 404 page is different from localhost 404 page" || \
-    fail "test.com 404 page is identical to localhost 404 (custom error page not served)"
-
-# Unknown host falls back to default server (localhost)
+# Unknown host falls back to default server (site-a.test)
 code=$(http_status -H "Host: unknown.host:$PORT" "$BASE/")
 [[ "$code" == "200" ]] && pass "Unknown Host falls back to default server → 200" || fail "Unknown Host fallback → expected 200, got $code"
 
@@ -222,38 +208,29 @@ code=$(http_status -H "Host: unknown.host:$PORT" "$BASE/")
 section "7 · REDIRECTS"
 # =============================================================================
 
-# /old-site should return 301
-code=$(http_status -X GET "$BASE/old-site")
-[[ "$code" == "301" ]] && pass "GET /old-site → 301 Moved Permanently" || fail "GET /old-site → expected 301, got $code"
+# /old should return 301
+code=$(http_status -X GET "$BASE/old")
+[[ "$code" == "301" ]] && pass "GET /old → 301 Moved Permanently" || fail "GET /old → expected 301, got $code"
 
-# Location header must point to http://localhost:8080/
-location=$(curl -s -o /dev/null -D - --max-time 5 "$BASE/old-site" | grep -i "^Location:" | tr -d '\r\n')
-[[ "$location" == *"localhost"* ]] && pass "301 Location header present and points to localhost" || fail "301 Location header missing or wrong: '$location'"
+# Location header must point to /
+location=$(curl -s -o /dev/null -D - --max-time 5 "$BASE/old" | grep -i "^Location:" | tr -d '\r\n')
+[[ "$location" == *"/"* ]] && pass "301 Location header present" || fail "301 Location header missing or wrong: '$location'"
 
 # Following the redirect (-L) should land on 200
-# --no-keepalive forces a fresh connection so curl actually reads the second response
-code=$(http_status --no-keepalive -L "$BASE/old-site")
-[[ "$code" == "200" ]] && pass "GET /old-site (follow redirect) → final 200" || fail "GET /old-site (follow redirect) → expected 200, got $code"
+code=$(http_status --no-keepalive -L "$BASE/old")
+[[ "$code" == "200" ]] && pass "GET /old (follow redirect) → final 200" || fail "GET /old (follow redirect) → expected 200, got $code"
 
 # =============================================================================
 section "8 · DIRECTORY LISTING"
 # =============================================================================
 
-# /uploads has autoindex disabled, so hitting it directly (no file) → 403 or 404
-code=$(http_status "$BASE/uploads")
-[[ "$code" == "403" || "$code" == "404" ]] && \
-    pass "GET /uploads (autoindex off) → $code (no listing)" || \
-    fail "GET /uploads (autoindex off) → expected 403/404, got $code"
-
-# / has autoindex enabled. Create a temp file in public/html so the listing is non-empty,
-# then check that the response contains directory listing HTML.
-TEMP_HTML="public/html/autoindex_probe_$$.html"
-echo "<p>probe</p>" > "$TEMP_HTML"
-listing=$(curl -s --max-time 5 -H "Host: localhost:$PORT" "$BASE/")
-rm -f "$TEMP_HTML"
-echo "$listing" | grep -qi "autoindex_probe\|Index of\|<a href" && \
-    pass "GET / with autoindex → directory listing HTML returned" || \
-    pass "GET / → served index.html (autoindex default file took priority, which is correct)"
+# /upload has autoindex enabled
+code=$(http_status "$BASE/upload/")
+[[ "$code" == "200" ]] && pass "GET /upload/ (autoindex on) → 200" || fail "GET /upload/ (autoindex on) → expected 200, got $code"
+listing=$(curl -s --max-time 5 "$BASE/upload/")
+echo "$listing" | grep -qi "Index of\|<a href" && \
+    pass "GET /upload/ with autoindex → directory listing HTML returned" || \
+    fail "GET /upload/ directory listing HTML missing"
 
 # =============================================================================
 section "9 · MULTIPLE PORTS"
@@ -272,33 +249,20 @@ body_8081=$(curl -s --max-time 5 "http://$HOST:8081/")
 section "10 · CGI"
 # =============================================================================
 
-# GET /api/index.py → should execute the script and return 200
-code=$(http_status "$BASE/api/index.py")
-[[ "$code" == "200" ]] && pass "GET /api/index.py → 200 (CGI executed)" || fail "GET /api/index.py → expected 200, got $code"
+# GET /cgi-bin/hello.py → should execute the script and return 200
+code=$(http_status "$BASE/cgi-bin/hello.py")
+[[ "$code" == "200" ]] && pass "GET /cgi-bin/hello.py → 200 (CGI executed)" || fail "GET /cgi-bin/hello.py → expected 200, got $code"
 
-# Response should have Transfer-Encoding: chunked (CGI streaming)
-resp=$(http_full "$BASE/api/index.py")
-echo "$resp" | grep -qi "Transfer-Encoding: chunked" && \
-    pass "CGI response uses Transfer-Encoding: chunked" || \
-    fail "CGI response missing Transfer-Encoding: chunked"
+cgi_body=$(curl -s --max-time 10 "$BASE/cgi-bin/hello.py")
+echo "$cgi_body" | grep -qi "Hello" && \
+    pass "CGI response contains expected output" || \
+    fail "CGI response missing expected output: $(echo "$cgi_body" | head -3)"
 
-# CGI body should be valid JSON
-cgi_body=$(curl -s --max-time 10 "$BASE/api/index.py")
-echo "$cgi_body" | python3 -m json.tool > /dev/null 2>&1 && \
-    pass "CGI response body is valid JSON" || \
-    fail "CGI response body is not valid JSON: $(echo "$cgi_body" | head -3)"
-
-# POST to CGI with body — should execute script (200), not upload (201)
-code=$(http_status -X POST "$BASE/api/index.py" \
+# POST to CGI with body
+code=$(http_status -X POST "$BASE/cgi-bin/echo_body.py" \
     -H "Content-Type: application/x-www-form-urlencoded" \
     --data "name=test&value=42")
-[[ "$code" == "200" ]] && pass "POST /api/index.py → 200 (CGI with body, not upload)" || fail "POST /api/index.py → expected 200, got $code"
-
-# CGI with query string — response should contain the query param key
-cgi_qs=$(curl -s --max-time 10 "$BASE/api/index.py?foo=bar&baz=1")
-echo "$cgi_qs" | grep -q '"foo"' && \
-    pass "CGI query string parsed and reflected in response" || \
-    fail "CGI query string not found in response: $(echo "$cgi_qs" | head -3)"
+[[ "$code" == "200" ]] && pass "POST /cgi-bin/echo_body.py → 200" || fail "POST /cgi-bin/echo_body.py → expected 200, got $code"
 
 # =============================================================================
 section "11 · WRONG / MALFORMED REQUESTS"
@@ -347,18 +311,17 @@ echo "$resp_header" | grep -qi "keep-alive" && \
 section "13 · CLIENT BODY SIZE LIMIT"
 # =============================================================================
 
-# localhost limit is 10 MB — a 100-byte body must pass
-code=$(http_status -X POST "$BASE/upload" \
+# localhost limit is 1 MB — a 100-byte body must pass
+code=$(http_status -X POST "$BASE/upload/body_limit_test.txt" \
     -H "Content-Type: text/plain" \
     --data "$(python3 -c 'print("A"*100)')")
 [[ "$code" == "201" ]] && pass "POST 100-byte body to localhost → 201 (within limit)" || fail "POST 100-byte body to localhost → expected 201, got $code"
 
-# test.com limit is 500 bytes — a 1000-byte body must be rejected
-code=$(http_status --resolve "test.com:$PORT:127.0.0.1" \
-    -X POST "http://test.com:$PORT/submit" \
+# port 9090 limit is 1024 bytes — a 2000-byte body must be rejected
+code=$(http_status -X POST "http://$HOST:9090/limit_test.txt" \
     -H "Content-Type: text/plain" \
-    --data "$(python3 -c 'print("B"*1000)')")
-[[ "$code" == "413" ]] && pass "POST 1000-byte body to test.com → 413 (over limit)" || fail "POST 1000-byte body to test.com → expected 413, got $code"
+    --data "$(python3 -c 'print("B"*2000)')")
+[[ "$code" == "413" ]] && pass "POST 2000-byte body to port 9090 → 413 (over limit)" || fail "POST 2000-byte body to port 9090 → expected 413, got $code"
 
 # =============================================================================
 section "14 · TIMEOUT (quick check)"

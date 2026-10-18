@@ -76,10 +76,11 @@ public class Response {
                 || (statusCode >= 100 && statusCode < 200);
         byte[] payload = noBody ? new byte[0] : body;
 
-        if (noBody)
+        if (noBody) {
             headers.remove("Content-Length");
-        else
+        } else if (!headers.containsKey("Transfer-Encoding")) {
             headers.put("Content-Length", String.valueOf(payload.length));
+        }
 
         headers.putIfAbsent("Date", ZonedDateTime.now(ZoneOffset.UTC).format(HTTP_DATE));
 
@@ -93,7 +94,7 @@ public class Response {
         }
         sb.append("\r\n");
 
-        byte[] head = sb.toString().getBytes(StandardCharsets.UTF_8);
+        byte[] head = sb.toString().getBytes(StandardCharsets.ISO_8859_1);
         byte[] out = new byte[head.length + payload.length];
         System.arraycopy(head, 0, out, 0, head.length);
         System.arraycopy(payload, 0, out, head.length, payload.length);

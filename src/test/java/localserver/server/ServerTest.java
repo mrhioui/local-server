@@ -60,7 +60,15 @@ class ServerTest {
 
     @BeforeEach
     void layout() throws IOException {
-        Files.createDirectories(base.resolve("www"));
+        Path www = base.resolve("www");
+        Files.createDirectories(www);
+        Files.writeString(www.resolve("index.html"), "<h1>Default Server</h1>", StandardCharsets.UTF_8);
+        Path a = www.resolve("a");
+        Files.createDirectories(a);
+        Files.writeString(a.resolve("d"), "target file", StandardCharsets.UTF_8);
+        Files.writeString(www.resolve("1"), "one", StandardCharsets.UTF_8);
+        Files.writeString(www.resolve("2"), "two", StandardCharsets.UTF_8);
+        Files.writeString(www.resolve("3"), "three", StandardCharsets.UTF_8);
     }
 
     @AfterEach
@@ -97,7 +105,7 @@ class ServerTest {
         String portList = Arrays.stream(ports).mapToObj(String::valueOf).collect(Collectors.joining(","));
         String json = """
                 {"settings": %s,
-                 "servers": [{"ports": [%s], %s "routes": [{"path": "/", "root": "www"}]}]}
+                 "servers": [{"ports": [%s], %s "routes": [{"path": "/", "root": "www", "methods": ["GET", "POST", "DELETE"]}]}]}
                 """.formatted(settingsJson, portList, serverExtra);
         return startJson(json);
     }
@@ -220,11 +228,11 @@ class ServerTest {
         Response r = new Client(port()).get();
         assertEquals(200, r.status());
         assertEquals(String.valueOf(r.body().getBytes(StandardCharsets.UTF_8).length), r.headers().get("content-length"));
-        assertEquals("text/plain; charset=utf-8", r.headers().get("content-type"));
+        assertEquals("text/html; charset=utf-8", r.headers().get("content-type"));
         assertTrue(r.headers().containsKey("date"));
         assertTrue(r.headers().get("date").endsWith("GMT"));
         assertEquals("keep-alive", r.headers().get("connection"));
-        assertTrue(r.body().contains("method:     GET"), r.body());
+        assertEquals("<h1>Default Server</h1>", r.body());
         await(() -> server.stats().requests() == 1, 2000, "request counter");
     }
 
@@ -233,8 +241,8 @@ class ServerTest {
         int a = freePort();
         int b = freePort();
         start("{}", a, b);
-        assertTrue(new Client(a).get().body().contains(":" + a));
-        assertTrue(new Client(b).get().body().contains(":" + b));
+        assertEquals(200, new Client(a).get().status());
+        assertEquals(200, new Client(b).get().status());
         assertEquals(2, server.listeners().size());
     }
 
@@ -526,11 +534,7 @@ class ServerTest {
         c.send("GET /a/./b%20c/../d?x=1&y=%20 HTTP/1.1\r\nHost: Site.Test:8080\r\nX-Tag:  padded  \r\n\r\n");
         Response r = c.read();
         assertEquals(200, r.status());
-        assertTrue(r.body().contains("path:       /a/d"), r.body());
-        assertTrue(r.body().contains("query:      x=1&y=%20"), r.body());
-        assertTrue(r.body().contains("host:       site.test"), r.body());
-        assertTrue(r.body().contains("X-Tag: padded"), r.body());
-        assertTrue(r.body().contains("body:       none"), r.body());
+        assertEquals("target file", r.body());
     }
 
     @Test
@@ -539,8 +543,8 @@ class ServerTest {
         Client c = new Client(port());
         c.send(post("/s", 5) + "hello");
         Response r = c.read();
-        assertEquals(200, r.status());
-        assertTrue(r.body().contains("fixed, 5 bytes, sha256 " + sha256("hello".getBytes(StandardCharsets.UTF_8))), r.body());
+        assertEquals(201, r.status());
+        assertEquals("hello", Files.readString(base.resolve("www").resolve("s")));
     }
 
     @Test
@@ -551,8 +555,8 @@ class ServerTest {
         c.send(post("/up", data.length));
         c.sendBytes(data);
         Response r = c.read();
-        assertEquals(200, r.status());
-        assertTrue(r.body().contains("fixed, 300000 bytes, sha256 " + sha256(data)), r.body());
+        assertEquals(201, r.status());
+        assertEquals(sha256(data), sha256(Files.readAllBytes(base.resolve("www").resolve("up"))));
         await(this::tempDirEmpty, 3000, "the temp file is removed once the request is finished");
         assertEquals(200, c.get().status(), "the connection stays usable");
     }
@@ -577,8 +581,8 @@ class ServerTest {
         }
         c.send("0\r\nX-Trailer: 1\r\n\r\n");
         Response r = c.read();
-        assertEquals(200, r.status());
-        assertTrue(r.body().contains("chunked, 70000 bytes, sha256 " + sha256(data)), r.body());
+        assertEquals(201, r.status());
+        assertEquals(sha256(data), sha256(Files.readAllBytes(base.resolve("www").resolve("c"))));
         await(this::tempDirEmpty, 3000, "temp file removed");
     }
 
@@ -593,16 +597,21 @@ class ServerTest {
             Thread.sleep(1);
         }
         Response r = c.read();
-        assertTrue(r.body().contains("chunked, 11 bytes, sha256 " + sha256("hello world".getBytes(StandardCharsets.UTF_8))), r.body());
+        assertEquals(201, r.status());
+        assertEquals("hello world", Files.readString(base.resolve("www").resolve("c")));
     }
 
     @Test
     void aPostAndAGetPipelinedTogetherAreBothAnswered() throws Exception {
         start("{}");
         Client c = new Client(port());
-        c.send(post("/1", 5) + "hello" + "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
-        assertTrue(c.read().body().contains("path:       /1"));
-        assertTrue(c.read().body().contains("path:       /2"));
+        c.send(post("/pipe", 5) + "hello" + "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
+        Response r1 = c.read();
+        assertEquals(201, r1.status());
+        assertEquals("hello", Files.readString(base.resolve("www").resolve("pipe")));
+        Response r2 = c.read();
+        assertEquals(200, r2.status());
+        assertEquals("two", r2.body());
     }
 
     @Test
@@ -613,7 +622,9 @@ class ServerTest {
             byte[] data = randomBytes(1000 + i * 100_000, i);
             c.send(post("/r", data.length));
             c.sendBytes(data);
-            assertTrue(c.read().body().contains(sha256(data)), "round " + i);
+            Response r = c.read();
+            assertEquals(201, r.status(), "round " + i);
+            assertEquals(sha256(data), sha256(Files.readAllBytes(base.resolve("www").resolve("r"))), "round " + i);
         }
         await(this::tempDirEmpty, 3000, "temp files removed");
     }
@@ -628,8 +639,8 @@ class ServerTest {
         assertEquals(100, c.read().status());
         c.send("hello");
         Response r = c.read();
-        assertEquals(200, r.status());
-        assertTrue(r.body().contains("fixed, 5 bytes"));
+        assertEquals(201, r.status());
+        assertEquals("hello", Files.readString(base.resolve("www").resolve("e")));
     }
 
     @Test
@@ -638,7 +649,9 @@ class ServerTest {
         Client c = new Client(port());
         c.send(post("/e", 5, "Expect: 100-continue") + "hello");
         assertEquals(100, c.read().status());
-        assertEquals(200, c.read().status());
+        Response r = c.read();
+        assertEquals(201, r.status());
+        assertEquals("hello", Files.readString(base.resolve("www").resolve("e")));
     }
 
     @Test
@@ -705,7 +718,7 @@ class ServerTest {
         Client ok = new Client(port());
         ok.send(post("/x", 1024));
         ok.sendBytes(new byte[1024]);
-        assertEquals(200, ok.read().status());
+        assertEquals(201, ok.read().status());
 
         Client tooBig = new Client(port());
         tooBig.send(post("/x", 1025));
@@ -716,22 +729,29 @@ class ServerTest {
 
     @Test
     void theHostHeaderSelectsTheVirtualHost() throws Exception {
+        Path siteA = base.resolve("site-a");
+        Path siteB = base.resolve("site-b");
+        Files.createDirectories(siteA);
+        Files.createDirectories(siteB);
+        Files.writeString(siteA.resolve("index.html"), "Site A Content");
+        Files.writeString(siteB.resolve("index.html"), "Site B Content");
+
         int port = freePort();
         startJson("""
                 {"settings": {}, "servers": [
-                  {"ports": [%d], "server_names": ["a.test"], "routes": [{"path": "/", "root": "www"}]},
-                  {"ports": [%d], "server_names": ["b.test"], "routes": [{"path": "/", "root": "www"}]}
+                  {"ports": [%d], "server_names": ["a.test"], "routes": [{"path": "/", "root": "site-a"}]},
+                  {"ports": [%d], "server_names": ["b.test"], "routes": [{"path": "/", "root": "site-b"}]}
                 ]}
                 """.formatted(port, port));
         Client c = new Client(port);
         c.send("GET / HTTP/1.1\r\nHost: b.test:" + port + "\r\n\r\n");
-        assertTrue(c.read().body().contains("servers[1]"));
+        assertEquals("Site B Content", c.read().body());
         c.send("GET / HTTP/1.1\r\nHost: A.TEST\r\n\r\n");
-        assertTrue(c.read().body().contains("servers[0]"));
+        assertEquals("Site A Content", c.read().body());
         c.send("GET / HTTP/1.1\r\nHost: unknown.test\r\n\r\n");
-        assertTrue(c.read().body().contains("servers[0]"), "unknown host falls back to the default server");
+        assertEquals("Site A Content", c.read().body(), "unknown host falls back to the default server");
         c.send("GET http://b.test/ HTTP/1.1\r\nHost: a.test\r\n\r\n");
-        assertTrue(c.read().body().contains("servers[1]"), "an absolute-form target wins over Host");
+        assertEquals("Site B Content", c.read().body(), "an absolute-form target wins over Host");
     }
 
     @Test
@@ -739,16 +759,17 @@ class ServerTest {
         int port = freePort();
         startJson("""
                 {"settings": {}, "servers": [
-                  {"ports": [%d], "server_names": ["small.test"], "client_max_body_size": 10, "routes": [{"path": "/", "root": "www"}]},
-                  {"ports": [%d], "server_names": ["large.test"], "client_max_body_size": 100000, "routes": [{"path": "/", "root": "www"}]}
+                  {"ports": [%d], "server_names": ["small.test"], "client_max_body_size": 10, "routes": [{"path": "/", "root": "www", "methods": ["GET", "POST"]}]},
+                  {"ports": [%d], "server_names": ["large.test"], "client_max_body_size": 100000, "routes": [{"path": "/", "root": "www", "methods": ["GET", "POST"]}]}
                 ]}
                 """.formatted(port, port));
         Client small = new Client(port);
-        small.send("POST / HTTP/1.1\r\nHost: small.test\r\nContent-Length: 50\r\n\r\n");
+        small.send("POST /file HTTP/1.1\r\nHost: small.test\r\nContent-Length: 50\r\n\r\n");
         assertEquals(413, small.read().status());
         Client large = new Client(port);
-        large.send("POST / HTTP/1.1\r\nHost: large.test\r\nContent-Length: 50\r\n\r\n" + "x".repeat(50));
-        assertEquals(200, large.read().status());
+        large.send("POST /file HTTP/1.1\r\nHost: large.test\r\nContent-Length: 50\r\n\r\n" + "x".repeat(50));
+        assertEquals(201, large.read().status());
+        assertEquals("x".repeat(50), Files.readString(base.resolve("www").resolve("file")));
     }
 
     @Test
@@ -826,11 +847,16 @@ class ServerTest {
                         try (Socket s = new Socket(InetAddress.getByName("127.0.0.1"), port)) {
                             s.setSoTimeout(10_000);
                             OutputStream out = s.getOutputStream();
-                            out.write(post("/p", data.length).getBytes(StandardCharsets.ISO_8859_1));
+                            String target = "/p_" + thread + "_" + i + ".bin";
+                            out.write(post(target, data.length).getBytes(StandardCharsets.ISO_8859_1));
                             out.write(data);
                             out.flush();
                             Response r = readResponse(new BufferedInputStream(s.getInputStream()));
-                            if (r.status() != 200 || !r.body().contains("sha256 " + sha256(data))) {
+                            if (r.status() != 201) {
+                                return false;
+                            }
+                            byte[] saved = Files.readAllBytes(base.resolve("www").resolve(target.substring(1)));
+                            if (!Arrays.equals(saved, data)) {
                                 return false;
                             }
                         }

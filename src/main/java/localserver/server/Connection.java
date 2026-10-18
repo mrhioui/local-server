@@ -1,15 +1,10 @@
 package localserver.server;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import localserver.config.ListenerSpec;
@@ -34,9 +29,6 @@ import localserver.http.Response;
 import localserver.http.Status;
 import localserver.session.Cookies;
 import localserver.session.Session;
-import java.nio.file.DirectoryStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 
 /**
  * Everything the server knows about one client: its buffers, its progress through the current
@@ -68,7 +60,6 @@ final class Connection {
     private static final int MEMORY_BODY_LIMIT = 64 * 1024;      // bigger bodies go to a temp file
     private static final long LINGER_NANOS = 2_000_000_000L;
     private static final long LINGER_MAX_BYTES = 1024 * 1024;
-    private static final long HASH_LIMIT = 16L * 1024 * 1024;    // echo only hashes bodies up to this
     private static final List<String> SUPPORTED_METHODS = List.of("GET", "POST", "DELETE");
 
     private final Server server;
@@ -202,7 +193,9 @@ final class Connection {
         boolean keepAlive = request.keepAlive();
         After next = keepAlive ? After.NEXT_REQUEST : After.CLOSE;
         if (!SUPPORTED_METHODS.contains(request.method())) {
-            respond(response(405, "405 Method Not Allowed\n", !keepAlive, "Allow: GET, POST, DELETE\r\n"), next);
+            Response err = ErrorPages.render(405, selected);
+            err.addHeader("Allow", "GET, POST, DELETE");
+            respond(wrapResponse(err, request, keepAlive), next);
             return;
         }
 
@@ -215,12 +208,6 @@ final class Connection {
         Route route = selected != null ? selected.matchRoute(request.path()) : null;
         if (route == null) {
             respond(renderError(404, keepAlive), next);
-            return;
-        }
-
-         //TODO: Check for M3 echo fallback when root is empty and no specialized features are configured
-        if (route.redirect() == null && route.cgi().isEmpty() && !route.autoindex() && isRootEmpty(route.root())) {
-            respond(response(200, echo(request), !keepAlive, ""), next);
             return;
         }
 
@@ -303,17 +290,6 @@ final class Connection {
         }
     }
 
-    private static boolean isRootEmpty(Path root) {
-        if (root == null || !Files.exists(root) || !Files.isDirectory(root)) {
-            return true;
-        }
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(root)) {
-            return !stream.iterator().hasNext();
-        } catch (IOException e) {
-            return true;
-        }
-    }
-
     private static String extractRel(String reqPath, String prefix) {
         String rel;
         if (prefix.equals("/")) {
@@ -333,8 +309,10 @@ final class Connection {
 
     /** A request we will not serve (malformed, too large, refused): answer, then linger and close. */
     private void refuse(ParseError error) {
-        String text = error.status() + " " + Status.reason(error.status()) + "\n" + error.message() + "\n";
-        respond(response(error.status(), text, true, ""), After.LINGER);
+        Response err = ErrorPages.render(error.status(), selected);
+        err.addHeader("Connection", "close");
+        err.addHeader("Date", server.date());
+        respond(err.getBytes(), After.LINGER);
     }
 
     private void respond(byte[] bytes, After then) {
@@ -373,66 +351,6 @@ final class Connection {
         }
     }
 
-    // ---- the M3 demo response ----------------------------------------------------------------
-
-    private String echo(Request r) {
-        StringBuilder sb = new StringBuilder(512);
-        sb.append("LocalServer M3 - parsed request\n");
-        sb.append("method:     ").append(r.method()).append('\n');
-        sb.append("target:     ").append(r.target()).append('\n');
-        sb.append("path:       ").append(r.path()).append('\n');
-        sb.append("query:      ").append(r.query()).append('\n');
-        sb.append("version:    ").append(r.version()).append('\n');
-        sb.append("host:       ").append(r.host()).append('\n');
-        sb.append("server:     ").append(selected.label()).append(" via ").append(listener.key()).append('\n');
-        sb.append("keep-alive: ").append(r.keepAlive()).append('\n');
-        sb.append("body:       ").append(describeBody(r)).append('\n');
-        sb.append("headers (").append(r.headers().count()).append("):\n");
-        for (Map.Entry<String, List<String>> e : r.headers().asMap().entrySet()) {
-            for (String value : e.getValue()) {
-                sb.append("  ").append(e.getKey()).append(": ").append(value).append('\n');
-            }
-        }
-        return sb.toString();
-    }
-
-    private static String describeBody(Request r) {
-        BodySink body = r.body();
-        if (body == null) {
-            return "none";
-        }
-        String kind = r.bodyMode().name().toLowerCase();
-        if (body.size() > HASH_LIMIT) {
-            return kind + ", " + body.size() + " bytes, sha256 skipped";
-        }
-        try (InputStream stream = body.openRead()) {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] chunk = new byte[8192];
-            int n;
-            while ((n = stream.read(chunk)) > 0) {
-                digest.update(chunk, 0, n);
-            }
-            return kind + ", " + body.size() + " bytes, sha256 " + HexFormat.of().formatHex(digest.digest());
-        } catch (IOException | NoSuchAlgorithmException e) {
-            return kind + ", " + body.size() + " bytes, sha256 unavailable";
-        }
-    }
-
-    private byte[] response(int status, String body, boolean close, String extraHeaders) {
-        byte[] payload = body.getBytes(StandardCharsets.UTF_8);
-        String headText = "HTTP/1.1 " + status + " " + Status.reason(status) + "\r\n"
-                + "Date: " + server.date() + "\r\n"
-                + "Server: LocalServer\r\n"
-                + "Content-Type: text/plain; charset=utf-8\r\n"
-                + "Content-Length: " + payload.length + "\r\n"
-                + extraHeaders
-                + "Connection: " + (close ? "close" : "keep-alive") + "\r\n"
-                + "\r\n";
-        byte[] headBytes = headText.getBytes(StandardCharsets.ISO_8859_1);
-        byte[] all = Arrays.copyOf(headBytes, headBytes.length + payload.length);
-        System.arraycopy(payload, 0, all, headBytes.length, payload.length);
-        return all;
-    }
 
     // ---- CGI execution ---------------------------------------------------------------------
 
